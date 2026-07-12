@@ -3,12 +3,16 @@
     "name": "bus-tracking-app",
     "slug": "bus-tracking-app",
     "version": "1.0.0",
+    "scheme": "bustracker",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.thecoder12321.bus-tracking-app"
+      "bundleIdentifier": "com.thecoder12321.bus-tracking-app",
+      "infoPlist": {
+        "UIBackgroundModes": ["location", "fetch"]
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -20,7 +24,36 @@
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "favicon": "./assets/favicon.png"
-    }
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-sqlite",
+      "expo-maps",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Bus Tracker shows the van's live position while you are using the app.",
+          "locationAlwaysAndWhenInUsePermission": "Bus Tracker shares the van's position with students and parents while you are driving a route, even when the app is in the background.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Bus Tracker uses the camera to scan student check-in QR codes.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#38BDF8"
+        }
+      ]
+    ]
   }
 }

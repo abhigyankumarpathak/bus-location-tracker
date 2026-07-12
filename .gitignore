@@ -31,7 +31,11 @@ yarn-error.*
 *.pem
 
 # local env files
+# .env holds the Supabase project credentials. .env.example is committed as the
+# template; the real one never is.
+.env
 .env*.local
+!.env.example
 
 # typescript
 *.tsbuildinfo

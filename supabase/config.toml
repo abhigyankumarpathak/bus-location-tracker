@@ -1,0 +1,19 @@
+project_id = "bus-tracking-app"
+
+# GPS trackers can't hold a Supabase user session, so this function can't demand
+# a user JWT. Its credential is the vehicle's device_key, checked inside the
+# function.
+[functions.ingest-location]
+verify_jwt = false
+
+# Called by a Database Webhook, not by a signed-in user. It authenticates the
+# caller by comparing the bearer token against the service-role key itself.
+[functions.send-push]
+verify_jwt = false
+
+# These two require a signed-in admin and check the caller's JWT.
+[functions.admin-unlock]
+verify_jwt = true
+
+[functions.admin-delete-user]
+verify_jwt = true
