@@ -1,18 +1,9 @@
-import { AppState, Platform } from 'react-native';
+import { AppState } from 'react-native';
 import { createClient } from '@supabase/supabase-js';
-
-/**
- * Session storage differs by platform.
- *
- * On native there is no `localStorage`, so SDK 57's Supabase guide installs an
- * expo-sqlite-backed shim. On web the browser already has a real one, and
- * importing the shim there would pull SQLite (and a wasm blob) into the bundle
- * for no reason. `require` rather than a top-level import, because the import
- * has to be conditional.
- */
-if (Platform.OS !== 'web') {
-  require('expo-sqlite/localStorage/install');
-}
+// Resolves to session-storage.web.ts on web and session-storage.ts on native.
+// That split is what keeps expo-sqlite out of the web bundle — see the comment
+// in either file; a runtime Platform check does not work.
+import { sessionStorage } from './session-storage';
 
 const url = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const key = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
@@ -30,7 +21,7 @@ export const supabase = createClient(
   key || 'placeholder-key',
   {
     auth: {
-      storage: localStorage,
+      storage: sessionStorage,
       autoRefreshToken: isConfigured,
       persistSession: isConfigured,
       // Native never carries the session in a URL fragment. On web we are not

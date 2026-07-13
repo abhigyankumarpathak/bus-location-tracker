@@ -24,9 +24,16 @@ hidden = [".expo", "node_modules", "dist", ".git"]
 channel = "stable-24_05"
 
 [env]
-# Metro is memory-hungry and Replit containers are not large. Capping the worker
-# count keeps the bundler from being OOM-killed mid-build.
 EXPO_NO_TELEMETRY = "1"
+
+# Metro spawns a worker per CPU core and each one is hungry. On a Replit
+# container that is a good way to get the bundler OOM-killed halfway through a
+# 1,800-module build — which looks exactly like the app "hanging" on a spinner,
+# because the bundle never arrives. `--max-workers 2` in the `replit` script caps
+# it. Slower to build, but it finishes.
+#
+# Node's default heap is also smaller than this bundle wants.
+NODE_OPTIONS = "--max-old-space-size=2048"
 
 # Expo's web dev server is fixed to 8081 (`--port` explicitly does not apply to
 # web), so that is what gets forwarded.
