@@ -148,25 +148,13 @@ Abhigyan to enable the code."*
 
 [![Run on Replit](https://replit.com/badge/github/abhigyankumarpathak/bus-location-tracker)](https://replit.com/new/github/abhigyankumarpathak/bus-location-tracker)
 
-The fastest way for a collaborator to see the app without installing anything.
-
-1. Click the badge. Replit forks the repo and installs the dependencies.
-2. Open the **Secrets** tab (🔒) and add the two Supabase values:
-   - `EXPO_PUBLIC_SUPABASE_URL` — Project Settings → Data API
-   - `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` — Project Settings → API Keys
-3. Press **Run**. The app opens in the browser pane.
-
-Without the secrets it still starts — you get a "Connect Supabase" screen rather
-than a crash, and the console says what is missing.
+Click the badge, add two Supabase secrets, press Run. Full instructions and the
+gotchas are in **[REPLIT.md](REPLIT.md)**.
 
 > **Replit runs the WEB build only.** It is a Linux container, so there is no iOS
 > or Android simulator on it. That is not a reduced version of the app — every
 > role, screen, and rule is there. Only push notifications are missing, because
 > browsers have no `expo-notifications`; alerts still land in the in-app inbox.
->
-> A browser is also where a transport coordinator actually belongs (blueprint
-> §7.3 asked for exactly this), so the web build is the *right* target for the
-> people most likely to be reviewing your work.
 
 **Share the publishable key with collaborators freely.** It grants nothing on its
 own — Row Level Security decides what each signed-in user can read, and Postgres
