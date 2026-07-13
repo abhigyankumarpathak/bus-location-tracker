@@ -13,6 +13,15 @@ The goal, in the blueprint's words, is *"reliable visibility from planned pickup
 through confirmed safe drop-off"* — and everything below exists to make that
 sentence true even when things go wrong.
 
+> ### 📋 [**What is built, and how it compares to the blueprint →**](docs/FEATURES.md)
+>
+> Every blueprint section, checked off one by one: what is built, what differs and
+> why, and **ten gaps stated plainly**. Read this one if you have the blueprint in
+> front of you and want to know whether we built what you asked for.
+>
+> Also: [setup guide](supabase/SETUP.md) · [the database](supabase/schema.sql) ·
+> [weekly report and purge](supabase/retention.sql)
+
 ## The rule that shapes everything
 
 > **A student checking in means "I am waiting at the hub." It does not mean "I
@@ -93,6 +102,32 @@ raw API call:
 Cutoffs are enforced server-side too: a change request before the cutoff applies
 immediately, and after it the database marks it Pending for a coordinator. The
 client does not get a vote.
+
+## The weekly report, and the purge
+
+Every **Sunday** each student's week is archived into a single report and **sent to
+them and their parents**. Only *then* is the routine detail behind it purged.
+
+The report **is** the history — purging the rows underneath compacts a child's
+record from ~10 rows a week to 1, it does not erase it.
+
+The job runs **weekly**; what it deletes is anything older than **`retention_weeks`**
+(default 3, set in Setup → Data). So the week being *reported* and the week being
+*purged* are never the same week — a family has had the report for three weeks
+before the detail behind it goes.
+
+**Never purged:** incidents; any trip where a student was a **no-show or could not
+be dropped off**, kept *whole*, every row of it; coordinator overrides and the
+reason for each; absences and pickup changes; all configuration.
+
+**Purged once archived:** ordinary rides where nothing happened, GPS breadcrumbs,
+read notifications, routine status changes with no reason.
+
+**The guard:** a week is never purged unless a report for it exists. *No report, no
+deletion* — even if it's ancient. A cron misfire cannot delete a week nobody saw.
+
+Lives in [supabase/retention.sql](supabase/retention.sql) — additive, and safe to
+run against a live database.
 
 ## Two features that are built but switched off
 

@@ -61,7 +61,7 @@ live GPS and payments.
 | Parent absence, parent-pickup, club-status updates | ✅ | With the cutoff rule from §4.2. |
 | Coordinator dashboard showing current trip and student statuses | ✅ | Summary cards, trip board, exception queue. |
 | Simple in-app or push notifications | ✅ | In-app everywhere; push on iOS/Android with an EAS project. |
-| Daily trip history and a basic exportable report | ⚠️ | History is built for every role. **There is no export button yet** — the data is all there, but nothing writes a CSV. This is the one §1.1 item not fully done. |
+| Daily trip history and a basic exportable report | ⚠️ | History is built for every role, and every family now receives a **weekly report** of their student's rides (see "the weekly report and purge" below). Still **no downloadable file** — nothing writes a CSV. |
 
 > ### The rule the whole app is shaped around
 >
@@ -399,6 +399,94 @@ surface.
 
 ---
 
+## Beyond the blueprint: the weekly report and purge
+
+Not asked for by the blueprint. Added because the blueprint's data model grows
+without bound, and a pilot that runs a term would quietly accumulate tens of
+thousands of rows saying *"the student boarded, the student was dropped off,
+nothing happened"* — the overwhelming majority of the data, and almost none of
+the value.
+
+It also does most of the job of §1.1's *"daily trip history and a basic
+exportable report"*, which was previously an open gap.
+
+### How it works
+
+Every **Sunday at 03:00** (`pg_cron`, or a button in Setup → Data):
+
+1. Each student's week is archived into **one** `weekly_reports` row.
+2. That report is **sent** to the student and their parents.
+3. **Only then** is routine detail older than the retention window purged.
+
+The report **is** the history. Purging the rows underneath compacts a child's
+record from ~10 rows a week to 1 — it does not erase it.
+
+### Weekly job, 3-week retention — two different things
+
+The job runs **every week**. What it deletes is anything older than
+**`retention_weeks`** (default 3, adjustable to 2/4/8/12 in Setup → Data). So each
+run sweeps up whichever week has just aged out.
+
+| Week | What Sunday's run does to it |
+| --- | --- |
+| This week | Nothing — it is still running |
+| Last week | **Report generated and sent** |
+| 2–3 weeks ago | Kept in full detail |
+| 4+ weeks ago | Routine detail **purged** (its report went out 3 weeks earlier) |
+
+Note that the week being *reported* and the week being *purged* are not the same
+week. A family has had the report for three weeks before the detail behind it
+goes.
+
+### What is never purged
+
+- **Incidents** — delays, breakdowns, accidents. The safety record.
+- **Any trip where a student was a no-show or could not be dropped off** — kept
+  **whole**, every row of it. The question afterwards is always *"what happened on
+  that run"*, not *"what happened to that one child"*.
+- **Coordinator overrides**, and the reason given for each (§2.1).
+- Absences, parent pickups, club changes.
+- The weekly reports themselves, and all configuration.
+
+### What is purged, once archived
+
+- Ordinary rides on trips where nothing went wrong.
+- **GPS breadcrumbs** — by far the largest table when tracking is on, at roughly
+  one row every few seconds per van.
+- Notifications already read.
+- Routine status changes carrying no reason.
+
+### The guard that makes it safe
+
+Three conditions must **all** hold before a row is deleted:
+
+1. It is older than `retention_weeks`.
+2. Its trip is not notable.
+3. **Its week has a report.**
+
+The third is the one that matters. **No report, no deletion — even if the data is
+ancient.** A cron misfire, or someone lowering the retention setting, cannot
+delete a week that was never sent to anybody.
+
+### Verified
+
+Against a real Postgres, with data six weeks old:
+
+| Check | Result |
+| --- | --- |
+| Reports generated and the parent notified | ✅ *"Sam — 5 rides… 4 completed, 1 no-show"* |
+| GPS breadcrumbs purged | ✅ 500 → 0 |
+| Routine rides purged | ✅ 6 rows |
+| The no-show Wednesday kept **whole** | ✅ |
+| The incident Friday kept **whole** | ✅ |
+| An old but **unreported** week | ✅ **untouched** |
+| A parent reading another child's report | ✅ refused by RLS |
+
+Lives in [`supabase/retention.sql`](../supabase/retention.sql) — purely additive,
+and safe to run against a live database.
+
+---
+
 ## 9. Acceptance scenarios (§9.1)
 
 | Scenario | Status |
@@ -431,7 +519,9 @@ complete the workflow without developer assistance.*
 
 Nothing here is hidden elsewhere in this document:
 
-1. **No CSV/report export** (§1.1) — the data is there, nothing writes the file.
+1. **No CSV export** (§1.1) — partly closed. Every family now gets a weekly report
+   in the app (see above), which covers "a basic report". Nothing writes a
+   downloadable **file** yet.
 2. **Check-in time window not enforced** (§4.1) — the column exists, the check does not.
 3. **No student photos on the driver roster** (§5.1) — a privacy decision for you, not me.
 4. **No photo attachment on incidents** (§5.1).
