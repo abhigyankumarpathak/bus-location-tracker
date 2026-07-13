@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useId, useState } from 'react';
 import { supabase } from './supabase';
 import type {
   AppNotification,
@@ -107,6 +107,14 @@ export function useTripStatuses(date: string = today()) {
   const [drivers, setDrivers] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Supabase returns the SAME channel object for a given topic name. Two screens
+  // using this hook at once — and tabs stay mounted, so the Dashboard and
+  // Exceptions both do — would land on one channel, and the second would try to
+  // attach listeners to an already-subscribed channel:
+  //   "cannot add `postgres_changes` callbacks ... after `subscribe()`"
+  // A per-instance id keeps each subscriber on its own channel.
+  const instance = useId();
+
   const reload = useCallback(async () => {
     const { data: t } = await supabase.from('daily_trips').select('*').eq('date', date);
     const dayTrips = (t as DailyTrip[]) ?? [];
@@ -151,7 +159,7 @@ export function useTripStatuses(date: string = today()) {
   // than polling.
   useEffect(() => {
     const channel = supabase
-      .channel(`trip-status:${date}`)
+      .channel(`trip-status:${date}:${instance}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'student_trip_status' }, () =>
         reload(),
       )
@@ -161,7 +169,7 @@ export function useTripStatuses(date: string = today()) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [date, reload]);
+  }, [date, instance, reload]);
 
   return {
     rows,
@@ -175,6 +183,9 @@ export function useTripStatuses(date: string = today()) {
 
 export function useNotifications(userId: string | null | undefined) {
   const [items, setItems] = useState<AppNotification[]>([]);
+  // Same reason as useTripStatuses: two mounted screens sharing one topic name
+  // would collide on a single channel.
+  const instance = useId();
 
   const reload = useCallback(async () => {
     if (!userId) return;
@@ -191,7 +202,7 @@ export function useNotifications(userId: string | null | undefined) {
     if (!userId) return;
 
     const channel = supabase
-      .channel(`notifications:${userId}`)
+      .channel(`notifications:${userId}:${instance}`)
       .on(
         'postgres_changes',
         {
@@ -207,7 +218,7 @@ export function useNotifications(userId: string | null | undefined) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [userId, reload]);
+  }, [userId, instance, reload]);
 
   const markAllRead = useCallback(async () => {
     if (!userId) return;
