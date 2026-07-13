@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Alert, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { useFocusEffect } from 'expo-router';
 import { useAuth } from '../../src/lib/auth';
 import { supabase } from '../../src/lib/supabase';
 import { useReference } from '../../src/lib/hooks';
@@ -88,9 +89,17 @@ export default function StaffPeople() {
     setInvites((i as Invite[]) ?? []);
   }, []);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  // Refetch every time the tab is opened, not just when it first mounts.
+  //
+  // Tabs stay mounted in the background, so a plain useEffect ran once and never
+  // again: anyone who redeemed an invite while the portal was open stayed
+  // invisible until the whole app was restarted. That is exactly the moment an
+  // admin is watching — they hand out a code and wait for the person to appear.
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load]),
+  );
 
   async function createInvite() {
     setError('');

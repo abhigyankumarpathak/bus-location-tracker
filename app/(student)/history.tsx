@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
 import { supabase } from '../../src/lib/supabase';
 import { useReference } from '../../src/lib/hooks';
@@ -38,9 +39,12 @@ export default function StudentHistory() {
     setLoading(false);
   }, []);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  // Tabs stay mounted, so a mount-only fetch never refreshes. Refetch on focus.
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load]),
+  );
 
   if (loading || ref.loading) return <Loading />;
 

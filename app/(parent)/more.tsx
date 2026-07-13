@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../../src/lib/auth';
 import { useFeatures } from '../../src/lib/org';
@@ -52,9 +53,12 @@ export default function ParentMore() {
     }
   }, []);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  // Tabs stay mounted, so a mount-only fetch never refreshes. Refetch on focus.
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load]),
+  );
 
   const nameFor = (id: string) => children.find((c) => c.id === id)?.full_name ?? 'Child';
 

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
 import { Alert, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../../src/lib/auth';
 import { supabase } from '../../src/lib/supabase';
@@ -70,9 +71,12 @@ export default function StaffExceptions() {
     setPeople((pr as Profile[]) ?? []);
   }, []);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  // Tabs stay mounted, so a mount-only fetch never refreshes. Refetch on focus.
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load]),
+  );
 
   const nameOf = (id: string | null) =>
     people.find((p) => p.id === id)?.full_name ?? 'Unknown';

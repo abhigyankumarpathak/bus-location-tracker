@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
 import { Alert, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../../src/lib/auth';
 import { supabase } from '../../src/lib/supabase';
@@ -55,11 +56,17 @@ export default function StaffDashboard() {
     setDrivers((data as Profile[]) ?? []);
   }, []);
 
-  useEffect(() => {
-    ensureTodaysTrips().then(reload);
-    loadDrivers();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Trip statuses arrive over realtime, but the driver list does not — so a
+  // driver who redeemed their invite while this tab sat in the background would
+  // never appear in the "assign a driver" picker. Refetch whenever the tab is
+  // opened.
+  useFocusEffect(
+    useCallback(() => {
+      ensureTodaysTrips().then(reload);
+      loadDrivers();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [loadDrivers]),
+  );
 
   async function assignDriver(tripId: string, driverId: string | null) {
     // Blueprint §5.2: a driver can be replaced BEFORE the trip starts.

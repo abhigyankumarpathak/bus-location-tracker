@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { useFocusEffect } from 'expo-router';
 import { useAuth } from '../../src/lib/auth';
 import { useOrg } from '../../src/lib/org';
 import { supabase } from '../../src/lib/supabase';
@@ -107,9 +108,14 @@ export default function StaffSetup() {
     );
   }, []);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  // Same reason as the People tab: tabs stay mounted, so loading once on mount
+  // meant a driver or student who joined while the portal was open never showed
+  // up in these pickers.
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load]),
+  );
 
   const refreshAll = useCallback(async () => {
     await Promise.all([ref.reload(), load()]);

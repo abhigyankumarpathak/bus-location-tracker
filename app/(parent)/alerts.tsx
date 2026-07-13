@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
 import { StyleSheet, Text } from 'react-native';
 import { useAuth } from '../../src/lib/auth';
 import { supabase } from '../../src/lib/supabase';
@@ -31,9 +32,12 @@ export default function ParentAlerts() {
     setAnnouncements((data as Announcement[]) ?? []);
   }, []);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  // Tabs stay mounted, so a mount-only fetch never refreshes. Refetch on focus.
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load]),
+  );
 
   const toneFor = (kind: string) => {
     if (kind === 'unable_to_drop_off' || kind === 'no_show' || kind === 'accident') return 'danger';
