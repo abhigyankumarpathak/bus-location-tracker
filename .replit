@@ -16,7 +16,10 @@ channel = "stable-24_05"
 EXPO_NO_TELEMETRY = "1"
 NODE_OPTIONS = "--max-old-space-size=2048"
 
-# Expo's web dev server is fixed to 8081. The --port flag does not apply to web.
+[[ports]]
+localPort = 5000
+externalPort = 5000
+
 [[ports]]
 localPort = 8081
 externalPort = 80
@@ -40,3 +43,6 @@ expertMode = true
 [userenv.shared]
 EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Lh9-6u4dEE492Y-b3922Zg_GhVHZmMU"
 EXPO_PUBLIC_SUPABASE_URL = "https://phupjhkztzqppqlrqpva.supabase.co"
+BROWSER = "none"
+
+[workflows]
