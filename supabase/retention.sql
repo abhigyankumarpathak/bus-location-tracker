@@ -342,15 +342,102 @@ $$;
 grant execute on function trigger_weekly_maintenance() to authenticated;
 
 -- ---------------------------------------------------------------------------
--- Schedule it: Sundays at 03:00.
+-- The schedule, as a switch in the admin portal.
 --
--- Requires pg_cron (Database → Extensions → enable `pg_cron`). If you would
--- rather not, the portal has a "Run now" button and the job is idempotent — but
--- then it only happens when someone remembers, which is not a plan.
+-- Sundays at 03:00, via pg_cron. An admin turns it on and off from
+-- Setup → Data — nobody should have to paste cron SQL into a dashboard to make
+-- the system look after itself.
+--
+-- Everything below uses EXECUTE rather than referring to `cron.*` directly, so
+-- this file still installs cleanly on a database where pg_cron has never been
+-- enabled. The functions then report that plainly instead of failing to create.
 -- ---------------------------------------------------------------------------
 
--- select cron.schedule(
---   'weekly-transport-maintenance',
---   '0 3 * * 0',
---   $$ select run_weekly_maintenance() $$
--- );
+create or replace function weekly_schedule_status() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare
+  installed boolean;
+  sched text;
+begin
+  select exists (select 1 from pg_extension where extname = 'pg_cron') into installed;
+
+  if not installed then
+    return jsonb_build_object(
+      'installed', false,
+      'enabled', false,
+      'hint', 'pg_cron is not enabled. Supabase dashboard → Database → Extensions → enable pg_cron, then come back.'
+    );
+  end if;
+
+  execute $q$
+    select schedule from cron.job where jobname = 'weekly-transport-maintenance'
+  $q$ into sched;
+
+  return jsonb_build_object(
+    'installed', true,
+    'enabled', sched is not null,
+    'schedule', sched
+  );
+end;
+$$;
+
+create or replace function set_weekly_schedule(enable boolean) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  installed boolean;
+begin
+  -- Scheduling a job that deletes data is an administrator's decision.
+  if not is_admin() then
+    raise exception 'Only an administrator can change the maintenance schedule.';
+  end if;
+
+  select exists (select 1 from pg_extension where extname = 'pg_cron') into installed;
+  if not installed then
+    raise exception 'pg_cron is not enabled on this project. Dashboard → Database → Extensions → enable pg_cron, then try again.';
+  end if;
+
+  if enable then
+    -- cron.schedule() upserts by job name, so turning it on twice is harmless.
+    execute $q$
+      select cron.schedule(
+        'weekly-transport-maintenance',
+        '0 3 * * 0',
+        'select run_weekly_maintenance()'
+      )
+    $q$;
+  else
+    -- Idempotent: unscheduling a job that is not there raises, so check first.
+    if exists (select 1 from pg_extension where extname = 'pg_cron') then
+      begin
+        execute $q$ select cron.unschedule('weekly-transport-maintenance') $q$;
+      exception when others then
+        null;  -- already gone; nothing to do
+      end;
+    end if;
+  end if;
+
+  insert into audit_logs (entity_type, action, new_value, reason, changed_by)
+  values (
+    'system',
+    case when enable then 'weekly_schedule_enabled' else 'weekly_schedule_disabled' end,
+    jsonb_build_object('enabled', enable),
+    'Weekly archive and purge schedule changed from the admin portal.',
+    auth.uid()
+  );
+
+  return weekly_schedule_status();
+end;
+$$;
+
+grant execute on function weekly_schedule_status() to authenticated;
+grant execute on function set_weekly_schedule(boolean) to authenticated;
+
+-- If you would rather do it by hand, this is the same thing:
+--
+--   select cron.schedule(
+--     'weekly-transport-maintenance',
+--     '0 3 * * 0',
+--     $$ select run_weekly_maintenance() $$
+--   );
+--
+--   select cron.unschedule('weekly-transport-maintenance');

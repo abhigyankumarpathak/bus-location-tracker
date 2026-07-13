@@ -412,7 +412,13 @@ exportable report"*, which was previously an open gap.
 
 ### How it works
 
-Every **Sunday at 03:00** (`pg_cron`, or a button in Setup → Data):
+An **administrator turns it on with a switch** (Setup → Data → "Enable weekly
+purge"), which schedules the job — no cron SQL to paste into a dashboard.
+Turning it off unschedules it, and nothing is purged while it is off. A
+coordinator cannot flip it: scheduling a job that deletes data is an admin's
+call, and the database enforces that rather than the UI.
+
+Every **Sunday at 03:00**, once enabled (or on demand, from the same screen):
 
 1. Each student's week is archived into **one** `weekly_reports` row.
 2. That report is **sent** to the student and their parents.

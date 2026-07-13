@@ -163,7 +163,21 @@ A week is **never** purged unless a report for it exists. No report, no deletion
 even if it is old. That guard is what stops a cron misfire from deleting a week
 nobody ever saw.
 
-Schedule it — **Database → Extensions**, enable `pg_cron`, then:
+### Turning it on
+
+1. **Database → Extensions** → enable **`pg_cron`**. (One click. It is what lets
+   Postgres run a job on a schedule.)
+2. In the app: **Setup → Data → "Enable weekly purge"**.
+
+That is it. The switch schedules the job for Sundays at 03:00, and turning it off
+unschedules it — no cron SQL to paste anywhere. Only an **administrator** can flip
+it, because scheduling a job that deletes data is not a coordinator's call, and
+the database enforces that.
+
+If `pg_cron` is not enabled, the switch is greyed out and says so rather than
+failing mysteriously.
+
+Prefer to do it by hand? Same thing:
 
 ```sql
 select cron.schedule(
@@ -171,14 +185,17 @@ select cron.schedule(
   '0 3 * * 0',                                -- Sundays, 03:00
   $$ select run_weekly_maintenance() $$
 );
+
+select cron.unschedule('weekly-transport-maintenance');
 ```
 
-Without cron it only runs when someone presses **Setup → Data → "Archive last
-week and purge"** in the portal, which is not a plan. The job is idempotent, so
-pressing it twice is harmless.
+With the schedule off, nothing is archived or purged unless someone presses
+**Setup → Data → "Archive last week and purge"**. That works, and is safe to press
+twice — but "someone remembers every Sunday" is not a plan.
 
-Retention defaults to **3 weeks** of full detail and is adjustable in
-Setup → Data.
+Retention defaults to **3 weeks** of full detail, adjustable in Setup → Data. Note
+those are two different things: the **job runs weekly**, and what it *deletes* is
+whatever has aged past the retention window.
 
 ## 9. Generate the day's trips automatically (recommended)
 

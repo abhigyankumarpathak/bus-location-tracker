@@ -39,6 +39,14 @@ interface MaintenanceResult {
   deleted?: Record<string, number>;
 }
 
+/** Whether the Sunday cron job exists, and whether pg_cron is even available. */
+interface ScheduleStatus {
+  installed: boolean;
+  enabled: boolean;
+  schedule?: string;
+  hint?: string;
+}
+
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const ROUTE_TYPES: RouteType[] = ['morning', 'afternoon', 'club', 'emergency'];
 
@@ -98,6 +106,8 @@ export default function StaffSetup() {
   // Weekly archive + purge
   const [maintaining, setMaintaining] = useState(false);
   const [lastRun, setLastRun] = useState<MaintenanceResult | null>(null);
+  const [schedule, setSchedule] = useState<ScheduleStatus | null>(null);
+  const [scheduling, setScheduling] = useState(false);
 
   const load = useCallback(async () => {
     const [{ data: st }, { data: dr }, { data: ra }, { data: keys }] = await Promise.all([
@@ -117,6 +127,12 @@ export default function StaffSetup() {
         ]),
       ),
     );
+
+    // Whether the weekly job is actually scheduled. Not fatal if the function is
+    // missing — that just means retention.sql has not been run yet, and the Data
+    // tab says so rather than looking broken.
+    const { data: sched } = await supabase.rpc('weekly_schedule_status');
+    setSchedule((sched as ScheduleStatus) ?? null);
   }, []);
 
   // Same reason as the People tab: tabs stay mounted, so loading once on mount
@@ -394,6 +410,44 @@ export default function StaffSetup() {
     const { error: e } = await supabase.from('organization').update(patch).eq('id', 1);
     if (e) return setError(staffError(e));
     await reloadOrg();
+  }
+
+  /**
+   * Turn the Sunday cron job on or off.
+   *
+   * Scheduling a job that deletes data is an administrator's call — the database
+   * refuses it for a coordinator, so the switch is disabled for them rather than
+   * failing after the fact.
+   */
+  async function toggleSchedule(enable: boolean) {
+    setError('');
+    setScheduling(true);
+
+    const { data, error: e } = await supabase.rpc('set_weekly_schedule', { enable });
+
+    setScheduling(false);
+
+    if (e) {
+      // The two failures worth naming: retention.sql was never run, or pg_cron
+      // is not enabled on the project. Both are fixable in about a minute, and
+      // neither is obvious from a raw Postgres error.
+      setError(
+        e.message.includes('function') && e.message.includes('does not exist')
+          ? 'The maintenance job is not installed. Run supabase/retention.sql in the SQL Editor.'
+          : e.message,
+      );
+      return;
+    }
+
+    const status = data as ScheduleStatus;
+    setSchedule(status);
+
+    Alert.alert(
+      enable ? 'Weekly purge scheduled' : 'Weekly purge stopped',
+      enable
+        ? 'It will run every Sunday at 03:00 — archive each student’s week, send the report to their family, then clear the routine detail that has already been reported.'
+        : 'Nothing will be archived or purged automatically. You can still run it by hand from this screen.',
+    );
   }
 
   /**
@@ -1037,12 +1091,50 @@ export default function StaffSetup() {
             ) : null}
           </Card>
 
-          <SectionLabel>Run it now</SectionLabel>
+          <SectionLabel>Automatic weekly purge</SectionLabel>
+          <Card>
+            <Row style={styles.between}>
+              <View style={styles.grow}>
+                <Text style={styles.name}>Enable weekly purge</Text>
+                <Text style={styles.fine}>
+                  {schedule?.enabled
+                    ? 'Runs every Sunday at 03:00 — report first, then purge.'
+                    : 'Off. Nothing is archived or purged unless you press the button below.'}
+                </Text>
+              </View>
+              <Switch
+                value={schedule?.enabled ?? false}
+                disabled={!isAdmin || !schedule?.installed || scheduling}
+                onValueChange={toggleSchedule}
+              />
+            </Row>
+
+            {schedule && !schedule.installed ? (
+              <Text style={styles.warn}>
+                ⚠ {schedule.hint ?? 'pg_cron is not enabled on this project.'}
+              </Text>
+            ) : null}
+
+            {schedule?.enabled ? (
+              <Text style={styles.fine}>
+                Scheduled as “{schedule.schedule}” (Sundays, 03:00). Turning this off stops the
+                automatic purge immediately — nothing is deleted while it is off.
+              </Text>
+            ) : null}
+
+            {!isAdmin ? (
+              <Text style={styles.fine}>
+                Only an administrator can schedule a job that deletes data. The database refuses it
+                for coordinators.
+              </Text>
+            ) : null}
+          </Card>
+
+          <SectionLabel>Run it once, now</SectionLabel>
           <Card>
             <Text style={styles.fine}>
-              Normally a Sunday cron job does this. Pressing it by hand does exactly the same thing,
-              and is safe to press twice — families are not re-notified for a week they have already
-              been sent.
+              Does exactly what the Sunday job does, immediately. Safe to press twice — families are
+              not re-notified for a week they have already been sent.
             </Text>
             <Button
               label="Archive last week and purge"
