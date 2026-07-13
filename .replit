@@ -15,17 +15,17 @@ channel = "stable-24_05"
 [env]
 EXPO_NO_TELEMETRY = "1"
 NODE_OPTIONS = "--max-old-space-size=2048"
-
-# `expo start --web` tries to open a browser, which on a Linux container means
-# shelling out to xdg-open. There is no browser and no xdg-open, so Expo crashes
-# before it ever serves anything. BROWSER=none tells it to skip that and just
-# run the server, which is all we want here.
 BROWSER = "none"
+EXPO_PUBLIC_SUPABASE_URL = "https://phupjhkztzqppqlrqpva.supabase.co"
+EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Lh9-6u4dEE492Y-b3922Zg_GhVHZmMU"
 
-# Expo's web dev server is fixed to 8081. The --port flag does not apply to web.
 [[ports]]
 localPort = 8081
 externalPort = 80
+
+[[ports]]
+localPort = 8082
+externalPort = 3000
 
 # Newer Replit drives the Run button from workflows, not from the `run` key
 # above. With no workflows defined there is no Run button at all. This is the one
