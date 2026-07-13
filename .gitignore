@@ -43,3 +43,7 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Supabase CLI scratch state (link/project refs, not source)
+supabase/.temp/
+supabase/.branches/
