@@ -1,7 +1,23 @@
 # Keep this file plain ASCII and free of angle brackets.
-# Replit's TOML parser rejected this file when the comments contained em-dashes,
-# emoji, and a URL placeholder in angle brackets. See REPLIT.md for the
-# explanation that used to live here.
+#
+# HOW THIS RUNS, AND WHY
+#
+# Replit's Preview pane and the iPhone "Simulate on Web" frame only look at
+# port 5000. Expo's DEV server cannot move off 8081 -- the --port flag explicitly
+# does not apply to web -- so the two cannot be reconciled while Metro is
+# serving.
+#
+# They do not need to be. `expo export --platform web` produces a plain static
+# site in dist/, and static files can be served on any port at all. So Replit
+# gets port 5000, and Metro is not running here at all.
+#
+# That also removes the memory pressure: Metro is what was at risk of being
+# OOM-killed on a small container. Serving files is not.
+#
+# The tradeoff: no hot reload. A code change needs another Run to rebuild. For
+# showing the app to collaborators -- which is what Replit is for here -- that is
+# the right trade. For live editing, use `npm run replit:dev` in the Shell, which
+# runs Metro on 8081; reach it via the .replit.dev URL rather than the Preview.
 
 run = "npm run replit"
 entrypoint = "app/_layout.tsx"
@@ -16,23 +32,17 @@ channel = "stable-24_05"
 EXPO_NO_TELEMETRY = "1"
 NODE_OPTIONS = "--max-old-space-size=2048"
 
-# `expo start --web` tries to open a browser, which on a Linux container means
-# shelling out to xdg-open. There is no browser and no xdg-open, so Expo crashes
-# before it ever serves anything. BROWSER=none tells it to skip that and just
-# run the server, which is all we want here.
+# Only needed by replit:dev. `expo start --web` tries to open a browser, which on
+# a Linux container means xdg-open, which does not exist -- so Expo crashes
+# before serving anything. This tells it not to bother.
 BROWSER = "none"
 
-# Expo's web dev server is fixed to 8081. The --port flag does not apply to web.
+# Port 5000 is what Replit's Preview and the mobile frame watch. Nothing else
+# works, so the static build is served here.
 [[ports]]
-localPort = 8081
+localPort = 5000
 externalPort = 80
 
-# Newer Replit drives the Run button from workflows, not from the `run` key
-# above. With no workflows defined there is no Run button at all. This is the one
-# workflow: it does exactly what `run` does.
-#
-# It must wait on port 8081. Anything pointing at 5000 will show a blank preview
-# forever, because Expo's web server cannot be moved off 8081.
 [workflows]
 runButton = "Run app"
 
@@ -44,11 +54,11 @@ mode = "sequential"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "npm run replit"
-waitForPort = 8081
+waitForPort = 5000
 
 [deployment]
 build = ["sh", "-c", "npx expo export --platform web"]
-run = ["sh", "-c", "npx serve dist --listen 8081 --single"]
+run = ["sh", "-c", "npx serve dist --listen 5000 --single"]
 deploymentTarget = "autoscale"
 
 [languages.typescript]
