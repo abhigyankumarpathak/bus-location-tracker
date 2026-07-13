@@ -31,3 +31,12 @@ pattern = "**/*.{ts,tsx}"
 
 [languages.typescript.languageServer]
 start = "typescript-language-server --stdio"
+
+[agent]
+expertMode = true
+
+[userenv]
+
+[userenv.shared]
+EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Lh9-6u4dEE492Y-b3922Zg_GhVHZmMU"
+EXPO_PUBLIC_SUPABASE_URL = "https://phupjhkztzqppqlrqpva.supabase.co"
