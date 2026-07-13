@@ -50,27 +50,63 @@ A browser is also where a transport coordinator actually belongs (the MVP
 blueprint asked for exactly this in §7.3), so the web build is the *right* target
 for the people most likely to be reviewing the work.
 
-## Notes on the config
+## Why Replit serves a static build, not the dev server
 
-**`.replit` must be plain ASCII with no angle brackets.** Replit's TOML parser
-rejected the file when the comments contained em-dashes, emoji, and a
-`<project-ref>` placeholder — with a misleading error pointing at the wrong line.
-That is why the explanation lives in this file instead.
+There is a hard conflict here, and it is worth understanding before someone
+"fixes" it back:
 
-**Port 8081, not 5000.** Expo's web dev server is fixed to 8081 — the `--port`
-flag explicitly does not apply to web. `.replit` forwards 8081 to the preview. If
-something rewrites the run command or the port mapping, the preview goes blank.
+- **Replit's Preview pane and the iPhone "Simulate on Web" frame only watch port
+  5000.** Nothing else.
+- **Expo's dev server cannot leave port 8081.** The `--port` flag explicitly does
+  not apply to web.
 
-**Metro is capped at two workers** (`--max-workers 2` in the `replit` script) and
-Node's heap is raised. Metro spawns a worker per CPU core by default and each is
-hungry; on a small container that gets the bundler OOM-killed partway through an
-1,800-module build, which looks exactly like the app hanging on a spinner.
+Those cannot both be satisfied while Metro is serving. The usual answer is a
+reverse proxy, and it is the wrong one.
+
+The right answer is that **Replit does not need a dev server at all.**
+`expo export --platform web` produces a plain static site in `dist/`, and static
+files can be served on any port you like. So Replit serves the export on 5000 and
+Metro never runs there. That also removes the memory pressure — Metro is what was
+at risk of being OOM-killed on a small container; serving files is not.
+
+**The tradeoff is hot reload.** A code change needs another Run to rebuild
+(a couple of minutes). For showing the app to collaborators — which is what
+Replit is for here — that is the right trade.
+
+**If you want live editing on Replit**, run this in the Shell instead:
+
+```sh
+npm run replit:dev
+```
+
+That runs Metro on 8081 with hot reload. The Preview pane will not see it (wrong
+port), so open the `.replit.dev` URL directly in a browser tab.
+
+## Other config notes
+
+**`.replit` must be plain ASCII with no angle brackets.** Replit's TOML parser is
+fussy, and — more often — a failed `git pull` leaves `<<<<<<<` conflict markers in
+the file, which produces the same misleading parse error pointing at the wrong
+line. If you see `expected '.' or '=', but got '<'`, check for a merge conflict
+first:
+
+```sh
+grep -c '<<<<<<<' .replit
+```
+
+**`BROWSER=none`** is set because `expo start --web` tries to open a browser,
+which on a Linux container means `xdg-open`, which does not exist — so Expo
+crashes before serving anything. Only `replit:dev` needs it.
 
 ## If the preview is blank
 
-1. **Check the console.** A failed bundle renders as a white page, and the reason
-   is always in the console.
-2. **Port.** `.replit` should have `localPort = 8081`.
-3. **Run command.** It should be `run = "npm run replit"`.
-4. **Secrets.** Missing ones give the setup screen, not a blank page — so a blank
-   page means something else.
+1. **Wait.** The export is ~1,400 modules and takes a few minutes on a container.
+   A build in progress and a broken build look identical from the preview pane.
+   Watch the Shell, not the preview.
+2. **Port.** `.replit` should have `localPort = 5000`, and the workflow should
+   `waitForPort = 5000`.
+3. **Run command.** `run = "npm run replit"`.
+4. **Secrets.** Missing ones give the "Connect Supabase" screen, not a blank page
+   — so blank means something else.
+5. **Console.** A failed bundle renders as a white page, and the reason is always
+   in the console.
