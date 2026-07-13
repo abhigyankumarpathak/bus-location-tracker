@@ -9,7 +9,18 @@ import {
   ROUTE_TYPE_LABEL,
 } from '../../src/lib/types';
 import type { DailyTrip, StudentTripStatus } from '../../src/lib/types';
-import { Badge, Card, Empty, Loading, Row, Screen, Title, theme } from '../../src/components/ui';
+import { WeeklyReports } from '../../src/components/WeeklyReports';
+import {
+  Badge,
+  Card,
+  Empty,
+  Loading,
+  Row,
+  Screen,
+  SectionLabel,
+  Title,
+  theme,
+} from '../../src/components/ui';
 
 /** Blueprint §4.1: date, route type, boarded time, drop-off time, final status. */
 export default function StudentHistory() {
@@ -51,6 +62,10 @@ export default function StudentHistory() {
   return (
     <Screen>
       <Title sub="Your past trips and how each one ended.">History</Title>
+
+      <WeeklyReports />
+
+      <SectionLabel>Recent trips</SectionLabel>
 
       {rows.length === 0 ? <Empty>No trips recorded yet.</Empty> : null}
 

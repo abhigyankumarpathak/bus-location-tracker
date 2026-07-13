@@ -30,7 +30,14 @@ import {
   theme,
 } from '../../src/components/ui';
 
-type Tab = 'routes' | 'hubs' | 'fleet' | 'features';
+type Tab = 'routes' | 'hubs' | 'fleet' | 'data' | 'features';
+
+interface MaintenanceResult {
+  reports_generated?: number;
+  cutoff?: string;
+  retention_weeks?: number;
+  deleted?: Record<string, number>;
+}
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const ROUTE_TYPES: RouteType[] = ['morning', 'afternoon', 'club', 'emergency'];
@@ -87,6 +94,10 @@ export default function StaffSetup() {
   const [vanLabel, setVanLabel] = useState('');
   const [vanPlate, setVanPlate] = useState('');
   const [vanCap, setVanCap] = useState('16');
+
+  // Weekly archive + purge
+  const [maintaining, setMaintaining] = useState(false);
+  const [lastRun, setLastRun] = useState<MaintenanceResult | null>(null);
 
   const load = useCallback(async () => {
     const [{ data: st }, { data: dr }, { data: ra }, { data: keys }] = await Promise.all([
@@ -374,11 +385,55 @@ export default function StaffSetup() {
     setVanCap('16');
   }
 
-  async function setFlag(patch: { gps_enabled?: boolean; payments_enabled?: boolean }) {
+  async function setFlag(patch: {
+    gps_enabled?: boolean;
+    payments_enabled?: boolean;
+    retention_weeks?: number;
+  }) {
     setError('');
     const { error: e } = await supabase.from('organization').update(patch).eq('id', 1);
     if (e) return setError(staffError(e));
     await reloadOrg();
+  }
+
+  /**
+   * Archive last week and purge what has already been reported.
+   *
+   * Normally a Sunday cron job does this. The button exists because a pilot may
+   * not have pg_cron enabled, and because it is reassuring to be able to see
+   * exactly what the job would do.
+   *
+   * It is safe to press twice: reports are upserted (families are not
+   * re-notified), and a purge only ever removes what is both old enough and
+   * already archived.
+   */
+  async function runMaintenance() {
+    setError('');
+    setMaintaining(true);
+
+    const { data, error: e } = await supabase.rpc('trigger_weekly_maintenance');
+
+    setMaintaining(false);
+
+    if (e) {
+      setError(
+        e.message.includes('function')
+          ? 'The maintenance job is not installed. Run supabase/retention.sql in the SQL Editor.'
+          : staffError(e),
+      );
+      return;
+    }
+
+    const result = data as MaintenanceResult;
+    setLastRun(result);
+
+    const deleted = Object.values(result.deleted ?? {}).reduce((a, b) => a + b, 0);
+    Alert.alert(
+      'Maintenance complete',
+      `${result.reports_generated ?? 0} weekly report(s) archived and sent.\n\n` +
+        `${deleted} routine row(s) purged from before ${result.cutoff}.\n\n` +
+        'Incidents, overrides, and anything that went wrong were kept.',
+    );
   }
 
   if (ref.loading) return <Loading />;
@@ -387,6 +442,7 @@ export default function StaffSetup() {
     { value: 'routes', label: 'Routes' },
     { value: 'hubs', label: 'Hubs' },
     { value: 'fleet', label: 'Fleet' },
+    { value: 'data', label: 'Data' },
     { value: 'features', label: 'Features' },
   ];
 
@@ -913,6 +969,101 @@ export default function StaffSetup() {
               Retiring a van keeps its history but takes it out of the pickers. Deleting is not
               offered, because past trips point at it.
             </Text>
+          </Card>
+        </>
+      ) : null}
+
+      {/* -------------------------------------------------------------- DATA */}
+      {tab === 'data' ? (
+        <>
+          <Card>
+            <Text style={styles.name}>Weekly archive and purge</Text>
+            <Text style={styles.body}>
+              Most of what this system records is "the student boarded, the student was dropped
+              off, nothing happened" — thousands of rows a term, and almost none of it worth
+              keeping row by row.
+            </Text>
+            <Text style={styles.body}>
+              So every Sunday each student's week is rolled into one report, sent to them and their
+              parents, and only then is the routine detail behind it cleared. The report becomes
+              the record.
+            </Text>
+          </Card>
+
+          <Card>
+            <Text style={styles.name}>Never purged</Text>
+            <Text style={styles.fine}>
+              • Incidents — delays, breakdowns, accidents{'\n'}
+              • Any trip where a student was a no-show or could not be dropped off — kept whole,
+              every row of it{'\n'}
+              • Coordinator overrides, and the reason given for each{'\n'}
+              • Absences, parent pickups, and club changes{'\n'}
+              • The weekly reports themselves{'\n'}
+              • Everyone's accounts, routes, hubs, and vans
+            </Text>
+          </Card>
+
+          <Card>
+            <Text style={styles.name}>Purged, once archived</Text>
+            <Text style={styles.fine}>
+              • Ordinary rides on trips where nothing went wrong{'\n'}
+              • GPS breadcrumbs — the largest table by far when tracking is on{'\n'}
+              • Notifications already read{'\n'}
+              • Routine status changes with no reason attached
+            </Text>
+            <Text style={styles.fine}>
+              A week is never purged until a report for it exists. No report, no deletion — even if
+              it is old.
+            </Text>
+          </Card>
+
+          <SectionLabel>Retention</SectionLabel>
+          <Card>
+            <Text style={styles.fine}>
+              Weeks of full detail to keep before compacting. The current week is never touched.
+            </Text>
+            <Row style={styles.wrap}>
+              {[2, 3, 4, 8, 12].map((w) => (
+                <Button
+                  key={w}
+                  label={`${w} weeks`}
+                  variant={org?.retention_weeks === w ? 'primary' : 'secondary'}
+                  onPress={() => setFlag({ retention_weeks: w })}
+                />
+              ))}
+            </Row>
+            {!isAdmin ? (
+              <Text style={styles.fine}>Only an administrator can change this.</Text>
+            ) : null}
+          </Card>
+
+          <SectionLabel>Run it now</SectionLabel>
+          <Card>
+            <Text style={styles.fine}>
+              Normally a Sunday cron job does this. Pressing it by hand does exactly the same thing,
+              and is safe to press twice — families are not re-notified for a week they have already
+              been sent.
+            </Text>
+            <Button
+              label="Archive last week and purge"
+              onPress={runMaintenance}
+              loading={maintaining}
+            />
+
+            {lastRun ? (
+              <View style={styles.panel}>
+                <Text style={styles.name}>Last run</Text>
+                <Text style={styles.fine}>
+                  {lastRun.reports_generated ?? 0} report(s) archived and sent.
+                </Text>
+                <Text style={styles.fine}>Purged everything routine from before {lastRun.cutoff}:</Text>
+                {Object.entries(lastRun.deleted ?? {}).map(([table, n]) => (
+                  <Text key={table} style={styles.fine}>
+                    • {n} × {table.replace(/_/g, ' ')}
+                  </Text>
+                ))}
+              </View>
+            ) : null}
           </Card>
         </>
       ) : null}

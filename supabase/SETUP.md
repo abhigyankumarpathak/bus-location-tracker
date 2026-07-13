@@ -135,7 +135,52 @@ Alerts already appear in-app. To deliver them when the app is closed:
 That header is how `send-push` knows the request came from your database. Push
 also needs an EAS project and a physical device — the simulator cannot receive it.
 
-## 8. Generate the day's trips automatically (recommended)
+## 8. Weekly report + purge (keeps the database small)
+
+**Run [`retention.sql`](./retention.sql) in the SQL Editor.** It is purely
+additive — it creates one table and some functions and drops nothing, so it is
+**safe to run on a live database with real accounts in it**.
+
+What it does, every Sunday:
+
+1. Rolls each student's week into a single `weekly_reports` row.
+2. Sends that report to the student and their parents.
+3. **Only then** purges the routine detail behind it.
+
+The report becomes the record. Purging the rows underneath compacts a child's
+history from ~10 rows a week to 1 — it does not erase it.
+
+**Never purged:** incidents, any trip where a student was a no-show or could not
+be dropped off (kept *whole*, every row), coordinator overrides and their
+reasons, absences and pickup changes, the reports themselves, and all
+configuration.
+
+**Purged once archived:** ordinary rides on trips where nothing went wrong, GPS
+breadcrumbs, notifications already read, and routine status changes with no
+reason attached.
+
+A week is **never** purged unless a report for it exists. No report, no deletion —
+even if it is old. That guard is what stops a cron misfire from deleting a week
+nobody ever saw.
+
+Schedule it — **Database → Extensions**, enable `pg_cron`, then:
+
+```sql
+select cron.schedule(
+  'weekly-transport-maintenance',
+  '0 3 * * 0',                                -- Sundays, 03:00
+  $$ select run_weekly_maintenance() $$
+);
+```
+
+Without cron it only runs when someone presses **Setup → Data → "Archive last
+week and purge"** in the portal, which is not a plan. The job is idempotent, so
+pressing it twice is harmless.
+
+Retention defaults to **3 weeks** of full detail and is adjustable in
+Setup → Data.
+
+## 9. Generate the day's trips automatically (recommended)
 
 Blueprint §3: "the system creates daily trips from the appropriate templates."
 

@@ -42,6 +42,12 @@ export interface Organization {
   morning_cutoff: string;
   afternoon_cutoff: string;
   checkin_window_min: number;
+  /**
+   * Weeks of full operational detail to keep. Older routine data is purged once
+   * it has been archived into a weekly report and sent to the family. Incidents
+   * and overrides are kept regardless of this setting.
+   */
+  retention_weeks: number;
 }
 
 export interface Profile {
@@ -233,6 +239,41 @@ export interface Invoice {
   status: 'unpaid' | 'paid' | 'waived';
   paid_at: string | null;
   note: string | null;
+}
+
+/**
+ * A week of a student's rides, archived into one row.
+ *
+ * This is what makes the weekly purge safe: the report IS the history, so
+ * deleting the routine trip rows underneath it compacts a child's record rather
+ * than erasing it. Anything that went wrong (incidents, no-shows, overrides) is
+ * kept in full and never purged.
+ */
+export interface WeeklyReport {
+  id: string;
+  student_id: string;
+  week_start: string;
+  week_end: string;
+  rides: {
+    date: string;
+    route: string;
+    type: string;
+    status: RiderStatus;
+    hub: string | null;
+    check_in: string | null;
+    boarded: string | null;
+    dropped_off: string | null;
+    note: string | null;
+  }[];
+  totals: {
+    total?: number;
+    completed?: number;
+    absent?: number;
+    parent_pickup?: number;
+    no_show?: number;
+    unable_to_drop_off?: number;
+  };
+  generated_at: string;
 }
 
 export interface AuditLog {

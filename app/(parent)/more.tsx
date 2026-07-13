@@ -12,6 +12,7 @@ import {
 } from '../../src/lib/types';
 import type { DailyTrip, StudentTripStatus } from '../../src/lib/types';
 import { FamilyLinks } from '../../src/components/FamilyLinks';
+import { WeeklyReports } from '../../src/components/WeeklyReports';
 import { PaymentsLocked } from '../../src/components/Disabled';
 import {
   Badge,
@@ -69,7 +70,11 @@ export default function ParentMore() {
       <SectionLabel>Family</SectionLabel>
       <FamilyLinks perspective="parent" />
 
-      <SectionLabel>Trip history</SectionLabel>
+      {/* The permanent record. Recent trips (below) are cleared after a few
+          weeks; these reports are not. */}
+      <WeeklyReports studentNameFor={nameFor} />
+
+      <SectionLabel>Recent trips</SectionLabel>
       {rows.length === 0 ? (
         <Empty>No trips recorded yet.</Empty>
       ) : (
