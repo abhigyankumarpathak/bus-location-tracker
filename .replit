@@ -16,10 +16,35 @@ channel = "stable-24_05"
 EXPO_NO_TELEMETRY = "1"
 NODE_OPTIONS = "--max-old-space-size=2048"
 
+# `expo start --web` tries to open a browser, which on a Linux container means
+# shelling out to xdg-open. There is no browser and no xdg-open, so Expo crashes
+# before it ever serves anything. BROWSER=none tells it to skip that and just
+# run the server, which is all we want here.
+BROWSER = "none"
+
 # Expo's web dev server is fixed to 8081. The --port flag does not apply to web.
 [[ports]]
 localPort = 8081
 externalPort = 80
+
+# Newer Replit drives the Run button from workflows, not from the `run` key
+# above. With no workflows defined there is no Run button at all. This is the one
+# workflow: it does exactly what `run` does.
+#
+# It must wait on port 8081. Anything pointing at 5000 will show a blank preview
+# forever, because Expo's web server cannot be moved off 8081.
+[workflows]
+runButton = "Run app"
+
+[[workflows.workflow]]
+name = "Run app"
+author = "repo"
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run replit"
+waitForPort = 8081
 
 [deployment]
 build = ["sh", "-c", "npx expo export --platform web"]
