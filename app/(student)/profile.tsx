@@ -1,12 +1,13 @@
 import { useCallback, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
-import { Linking, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../../src/lib/auth';
 import { useFeatures } from '../../src/lib/org';
 import { supabase } from '../../src/lib/supabase';
 import { useNotifications, useReference } from '../../src/lib/hooks';
-import type { Profile, Student } from '../../src/lib/types';
+import type { Student } from '../../src/lib/types';
 import { PaymentsLocked } from '../../src/components/Disabled';
+import { FamilyLinks } from '../../src/components/FamilyLinks';
 import {
   Badge,
   Button,
@@ -33,7 +34,6 @@ export default function StudentProfile() {
 
   const { items: notifications, unread, markAllRead } = useNotifications(me);
   const [student, setStudent] = useState<Student | null>(null);
-  const [guardians, setGuardians] = useState<Profile[]>([]);
 
   const load = useCallback(async () => {
     if (!me) return;
@@ -44,17 +44,6 @@ export default function StudentProfile() {
       .eq('student_id', me)
       .maybeSingle();
     setStudent((s as Student) ?? null);
-
-    const { data: links } = await supabase
-      .from('guardian_links')
-      .select('parent_id')
-      .eq('status', 'accepted');
-
-    const ids = ((links as { parent_id: string }[]) ?? []).map((l) => l.parent_id);
-    if (ids.length) {
-      const { data: p } = await supabase.from('profiles').select('*').in('id', ids);
-      setGuardians((p as Profile[]) ?? []);
-    }
   }, [me]);
 
   // Tabs stay mounted, so a mount-only fetch never refreshes. Refetch on focus.
@@ -86,29 +75,13 @@ export default function StudentProfile() {
         </Text>
       </Card>
 
-      <SectionLabel>Linked guardians</SectionLabel>
-      {guardians.length === 0 ? (
-        <Empty>No parents linked yet. A parent links to you from their own app.</Empty>
-      ) : (
-        guardians.map((g) => (
-          <Card key={g.id}>
-            <Row style={styles.between}>
-              <View style={styles.grow}>
-                <Text style={styles.name}>{g.full_name}</Text>
-                <Text style={styles.fine}>{g.phone ?? 'No phone number'}</Text>
-              </View>
-              <Badge label="Guardian" tone="success" />
-            </Row>
-            {g.phone ? (
-              <Button
-                label={`Call ${g.full_name.split(' ')[0]}`}
-                variant="secondary"
-                onPress={() => Linking.openURL(`tel:${g.phone!.replace(/[^\d+]/g, '')}`)}
-              />
-            ) : null}
-          </Card>
-        ))
-      )}
+      {/* A link is a request the other side accepts — and the student IS the
+          other side. This section used to list accepted guardians only, so a
+          parent's request landed in the database and the student was never
+          shown it: nowhere to accept, nothing to decline, and the parent left
+          watching a request that could never go through. */}
+      <SectionLabel>Parents</SectionLabel>
+      <FamilyLinks perspective="student" />
 
       <Row style={styles.between}>
         <SectionLabel>Notifications</SectionLabel>
