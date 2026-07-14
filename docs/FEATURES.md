@@ -65,7 +65,7 @@ are kept forever. An administrator turns it on with a switch. See
 | Separate Morning / Afternoon / Club routes | ✅ | Plus `emergency`, per §3.2. |
 | Daily trip creation from a route template | ✅ | `ensure_daily_trips()`. Idempotent. Runs when anyone opens the app, and optionally on a nightly `pg_cron` schedule. |
 | Student check-in, driver boarding confirmation, driver drop-off confirmation | ✅ | And the distinction between them is enforced in the database — see the box below. |
-| Parent absence, parent-pickup, club-status updates | ✅ | With the cutoff rule from §4.2. |
+| Parent absence, parent-pickup, club-status updates | ✅ | With the cutoff rule from §4.2. Surfaced as **"Report absence"** — see the naming note in §4.2 below. |
 | Coordinator dashboard showing current trip and student statuses | ✅ | Summary cards, trip board, exception queue. |
 | Simple in-app or push notifications | ✅ | In-app everywhere; push on iOS/Android with an EAS project. |
 | Daily trip history and a basic exportable report | ⚠️ | History is built for every role, and every family now receives a **weekly report** of their student's rides (see "the weekly report and purge" below). Still **no downloadable file** — nothing writes a CSV. |
@@ -215,7 +215,7 @@ because it blocks the trip from closing.
 | --- | --- |
 | **My Children** — a card per child, current status, next expected event | ✅ |
 | **Child Trip** — the timeline | ⚠️ Built, but the blueprint's timeline includes **"Approaching"**, which this app cannot show — it is a GPS-derived state, and GPS is switched off. The other six steps are all there. |
-| **Daily Change** — absent, parent pickup, club attending/cancelled/not attending | ✅ |
+| **Report a change** — absence, parent pickup, club attending/not attending | ✅ | The blueprint calls this "Parent absence". Renamed in the UI — see below. |
 | **Notifications** | ✅ |
 | **History** | ✅ |
 
@@ -226,6 +226,42 @@ because it blocks the trip from closing.
 | After the cutoff → Pending, coordinator approves | ✅ |
 | Permanent hub/address changes are **not** self-service | ✅ The screen says to ask the office |
 | Vehicle location only if GPS is enabled | ✅ Otherwise a panel explains why it is off |
+
+> ### One rename: "Parent absence" → "Report absence"
+>
+> The blueprint calls this **"Parent absence"** (§1.1), and the first build put a
+> button labelled **"Absent"** on the parent's screen. That conflates two things:
+>
+> - **What the parent DOES** — reports an absence.
+> - **What the child BECOMES** — `Absent`.
+>
+> A button named after the outcome reads like a toggle on the student, rather
+> than a message to the school. So the actions are now named as actions —
+> **"Report absence"**, **"Report parent pickup"** — and each states its outcome
+> underneath it (*"Sahasra will show as Absent"*), so nobody presses a button
+> without knowing what it will cause. The **status** is still `Absent`; only the
+> **action** was renamed.
+>
+> Same reasoning for the tab: **Daily change → Report**.
+
+> ### The morning workflow, verified end to end
+>
+> Run against a real Postgres, not asserted:
+>
+> | Step | Result |
+> | --- | --- |
+> | 6:30 — parent reports absence (before cutoff) | Auto-approved. Driver's roster **already shows Absent** before the van leaves. |
+> | Driver's roster at the hub | Mike `absent` → **stop is skippable**; the app says so |
+> | 7:05 — student taps **Check In** | → `Waiting`. Driver **and** coordinator notified. |
+> | Student tries to claim **Boarded** | **Refused by the database.** Status stays `Waiting`. |
+> | 7:12 — driver taps **Boarded** | → `Boarded`. **Parent notified**: "Sahasra boarded the vehicle." |
+> | Student never appears | Driver marks `No-Show` → **parent and coordinator notified** |
+> | Driver ends trip with a student still aboard | **Refused**: *"Cannot end the trip: 1 student(s) still have no final status."* Trip stays `active`. |
+> | Driver drops her off, then ends the trip | Trip `completed`; riders resolved |
+>
+> **Waiting vs No-Show** are deliberately different facts: *"I am here"* (the
+> student's claim) versus *"I came, they weren't"* (the driver's record). Neither
+> can be set by the other party.
 
 ---
 
