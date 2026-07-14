@@ -32,11 +32,40 @@ import {
  * in the MVP, which is why there is nothing here for them — a parent asks the
  * office instead.
  */
-const KINDS: { kind: ChangeKind; label: string; blurb: string }[] = [
-  { kind: 'absent', label: 'Absent', blurb: 'Not travelling at all today.' },
-  { kind: 'parent_pickup', label: 'Parent pickup', blurb: 'I am collecting them myself.' },
-  { kind: 'club_attending', label: 'Attending club', blurb: 'Put them on the club van.' },
-  { kind: 'not_attending', label: 'Not attending club', blurb: 'Take them off the club van.' },
+/**
+ * These are ACTIONS a parent takes, not statuses.
+ *
+ * The distinction matters and the UI used to blur it: the button said "Absent",
+ * which is what the child *becomes*, not what the parent *does*. A parent
+ * reports an absence; the student's status then becomes Absent. Naming the
+ * button after the outcome makes it read like a toggle on the child rather than
+ * a message to the school.
+ */
+const KINDS: { kind: ChangeKind; label: string; blurb: string; becomes: string }[] = [
+  {
+    kind: 'absent',
+    label: 'Report absence',
+    blurb: 'Not travelling at all today — sick, appointment, or away.',
+    becomes: 'Absent',
+  },
+  {
+    kind: 'parent_pickup',
+    label: 'Report parent pickup',
+    blurb: 'They are at school, but I am collecting them myself — they must not board the van.',
+    becomes: 'Parent Pickup',
+  },
+  {
+    kind: 'club_attending',
+    label: 'Attending club',
+    blurb: 'Put them on the after-school club van.',
+    becomes: 'Scheduled on the club run',
+  },
+  {
+    kind: 'not_attending',
+    label: 'Not attending club',
+    blurb: 'Take them off the club van.',
+    becomes: 'Removed from the club run',
+  },
 ];
 
 export default function ParentChange() {
@@ -98,7 +127,7 @@ export default function ParentChange() {
   if (!children.length) {
     return (
       <Screen>
-        <Title sub="Link a child first.">Daily change</Title>
+        <Title sub="Link a child first.">Report a change</Title>
         <Empty>No children linked. Use the More tab.</Empty>
       </Screen>
     );
@@ -108,7 +137,7 @@ export default function ParentChange() {
 
   return (
     <Screen>
-      <Title sub="Report an absence, a pickup, or a club change.">Daily change</Title>
+      <Title sub="Tell the school before the van sets off. The driver's roster updates automatically.">Report a change</Title>
 
       <Card>
         {children.length > 1 ? (
@@ -153,6 +182,11 @@ export default function ParentChange() {
           <View style={styles.grow}>
             <Text style={styles.optionTitle}>{k.label}</Text>
             <Text style={styles.fine}>{k.blurb}</Text>
+            {/* The action is what you do; this is what your child becomes. Say
+                both, so nobody has to guess what the button will actually cause. */}
+            <Text style={styles.becomes}>
+              {nameFor(childId ?? '')} will show as “{k.becomes}”
+            </Text>
           </View>
           <Text style={styles.chev}>›</Text>
         </Pressable>
@@ -221,6 +255,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.surface,
   },
   optionTitle: { fontSize: 15, fontWeight: '700', color: theme.text },
+  becomes: { fontSize: 12, color: theme.accent, lineHeight: 17 },
   chev: { fontSize: 22, color: theme.faint },
   chip: {
     paddingHorizontal: 13,

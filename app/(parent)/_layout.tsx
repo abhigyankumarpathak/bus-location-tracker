@@ -22,7 +22,7 @@ export default function ParentLayout() {
       <Tabs.Screen
         name="change"
         options={{
-          title: 'Daily change',
+          title: 'Report',
           tabBarIcon: ({ focused }) => <TabIcon glyph="✏️" focused={focused} />,
         }}
       />
