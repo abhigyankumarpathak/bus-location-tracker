@@ -42,20 +42,19 @@ export function FamilyLinks({ perspective }: { perspective: 'student' | 'parent'
     const { data } = await supabase.from('guardian_links').select('*');
     const rows = (data as LinkRow[]) ?? [];
 
-    const otherIds = rows.map((r) => (r.parent_id === me ? r.student_id : r.parent_id));
-    let profiles: Profile[] = [];
-    if (otherIds.length) {
-      const { data: p } = await supabase
-        .from('profiles')
-        .select('id, full_name, phone, role')
-        .in('id', otherIds);
-      profiles = (p as Profile[]) ?? [];
-    }
+    // Names come from my_link_counterparts(), not from `profiles` directly.
+    // Reading the profile of a parent or child is only permitted once the link
+    // is ACCEPTED, so querying the table here named nobody while a request was
+    // still pending — which is exactly when a name matters most. The function
+    // hands back the name for a pending link and holds the phone number until
+    // the other person has actually agreed.
+    const { data: people } = await supabase.rpc('my_link_counterparts');
+    const profiles = (people as LinkRow['other'][] | null) ?? [];
 
     setLinks(
       rows.map((r) => {
         const otherId = r.parent_id === me ? r.student_id : r.parent_id;
-        return { ...r, other: profiles.find((p) => p.id === otherId) ?? null };
+        return { ...r, other: profiles.find((p) => p?.id === otherId) ?? null };
       }),
     );
   }, [me]);

@@ -494,6 +494,36 @@ language sql stable security definer set search_path = public as $$
   limit 1;
 $$;
 
+/**
+ * Who is on the other side of your guardian links — including PENDING ones.
+ *
+ * profiles RLS lets a parent and a child read each other only once the link is
+ * `accepted` (is_guardian_of and is_child_of both insist on it). That is the
+ * right rule for the profiles table, and the wrong one for a consent prompt: it
+ * left both sides of a pending request looking at "Unknown". The parent could
+ * not see who they had asked, and the student could not see who was asking —
+ * and a request you cannot put a name to is not one anybody should accept.
+ *
+ * So: names for people you already have a link row with, either direction,
+ * pending or accepted. The phone number is withheld until the link IS accepted,
+ * because that is the part the other person has not agreed to share yet. Nothing
+ * here is reachable without a link row, and creating one already requires
+ * knowing the person's exact email or phone.
+ */
+create or replace function my_link_counterparts()
+returns table (id uuid, full_name text, role user_role, phone text)
+language sql stable security definer set search_path = public as $$
+  select p.id,
+         p.full_name,
+         p.role,
+         case when gl.status = 'accepted' then p.phone end
+  from guardian_links gl
+  join profiles p
+    on p.id = case when gl.parent_id = auth.uid() then gl.student_id else gl.parent_id end
+  where gl.parent_id = auth.uid() or gl.student_id = auth.uid();
+$$;
+grant execute on function my_link_counterparts() to authenticated;
+
 create or replace function removal_notice_for(target_email text) returns text
 language sql stable security definer set search_path = public as $$
   select reason from account_removals
