@@ -10,13 +10,35 @@ insert into schools (id, name, address, lat, lng) values
   ('50000000-0000-0000-0000-000000000001', 'Cupertino High School',
    '10100 Finch Ave, Cupertino, CA', 37.3210, -122.0060);
 
+-- ---------------------------------------------------------------------------
+-- PLACEHOLDER HUBS -- replace these with the real ones.
+--
 -- Blueprint §3.1: hubs are agreed neighbourhood pickup points, reused across
--- routes — not stops invented per route.
+-- routes -- not stops invented per route.
+--
+-- Two fields the families actually read:
+--   name     short, and what appears on their screen        "Oak & Example"
+--   address  the "which corner exactly" line                "Corner of Oak Road and Example Way"
+--
+-- The address is what stops someone waiting on the wrong side of the junction.
+-- Fill it in even though it is optional.
+--
+-- Coordinates only matter once live GPS is switched on, so a rough pin is fine
+-- for now -- long-press the spot in any maps app and copy the pair it shows.
+-- These ones are around Cupertino, CA, because that is where the iOS simulator
+-- places itself by default.
+--
+-- All of this is editable in the app: Setup -> Hubs. No SQL needed.
+-- ---------------------------------------------------------------------------
 insert into hubs (id, name, address, lat, lng) values
-  ('40000000-0000-0000-0000-000000000001', 'Rancho Clubhouse',    'Rancho Rinconada, Cupertino',  37.3230, -122.0140),
-  ('40000000-0000-0000-0000-000000000002', 'Blaney & Homestead',  'Homestead Rd, Cupertino',      37.3382, -122.0180),
-  ('40000000-0000-0000-0000-000000000003', 'Apple Park Lot',      'Tantau Ave, Cupertino',        37.3349, -122.0090),
-  ('40000000-0000-0000-0000-000000000004', 'De Anza & McClellan', 'De Anza Blvd, Cupertino',      37.3160, -122.0320);
+  ('40000000-0000-0000-0000-000000000001', 'Oak & Example',
+   'Corner of Oak Road and Example Way (outside the clubhouse)',      37.3230, -122.0140),
+  ('40000000-0000-0000-0000-000000000002', 'Maple & Second',
+   'Corner of Maple Street and Second Avenue (by the post box)',      37.3382, -122.0180),
+  ('40000000-0000-0000-0000-000000000003', 'Cedar Lot',
+   'Cedar Avenue parking lot, north end',                             37.3349, -122.0090),
+  ('40000000-0000-0000-0000-000000000004', 'Pine & Third',
+   'Corner of Pine Boulevard and Third Street (bus shelter)',         37.3160, -122.0320);
 
 insert into vehicles (id, label, plate, capacity) values
   ('11111111-1111-1111-1111-111111111111', 'Van 1', '7XYZ123', 16),
@@ -29,6 +51,24 @@ insert into route_templates (id, name, type, school_id, operating_weekdays, defa
   ('a0000000-0000-0000-0000-000000000001', 'M-01 Morning',   'morning',   '50000000-0000-0000-0000-000000000001', '{1,2,3,4,5}', '11111111-1111-1111-1111-111111111111'),
   ('a0000000-0000-0000-0000-000000000002', 'A-01 Afternoon', 'afternoon', '50000000-0000-0000-0000-000000000001', '{1,2,3,4,5}', '11111111-1111-1111-1111-111111111111'),
   ('a0000000-0000-0000-0000-000000000003', 'C-01 Club',      'club',      '50000000-0000-0000-0000-000000000001', '{2,4}',       '33333333-3333-3333-3333-333333333333');
+
+-- ---------------------------------------------------------------------------
+-- PLACEHOLDER TIMES -- replace these with the real ones.
+--
+-- planned_arrival is when the van is DUE at that hub. It is what drives the
+-- 15-minute and 5-minute alerts families get (blueprint §4.1), so it is the one
+-- field worth getting right: a wrong time here means a child standing on a
+-- corner too early, or missing the van.
+--
+-- planned_departure is when it leaves. On the school stop of a morning run only
+-- the arrival matters; on the school stop of an afternoon run only the
+-- departure does.
+--
+-- Leave a time blank and the app simply says "time not set" and schedules no
+-- alerts for that hub -- it does not guess.
+--
+-- All editable in the app: Setup -> Routes -> (a route) -> Stops -> Times.
+-- ---------------------------------------------------------------------------
 
 -- Morning: hubs -> school.
 insert into route_stops (id, route_id, seq, hub_id, school_id, planned_arrival, planned_departure) values

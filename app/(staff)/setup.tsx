@@ -5,6 +5,7 @@ import { useAuth } from '../../src/lib/auth';
 import { useOrg } from '../../src/lib/org';
 import { supabase } from '../../src/lib/supabase';
 import { useReference } from '../../src/lib/hooks';
+import { geocode } from '../../src/lib/geocode';
 import { ROUTE_TYPE_LABEL } from '../../src/lib/types';
 import type {
   Hub,
@@ -94,8 +95,12 @@ export default function StaffSetup() {
   // Hub form (doubles as the editor)
   const [editingHub, setEditingHub] = useState<Hub | null>(null);
   const [hubName, setHubName] = useState('');
+  const [hubAddress, setHubAddress] = useState('');
   const [hubLat, setHubLat] = useState('');
   const [hubLng, setHubLng] = useState('');
+  const [locating, setLocating] = useState(false);
+  /** What the geocoder matched, shown so an admin can catch a wrong pin. */
+  const [foundLabel, setFoundLabel] = useState('');
 
   // Vehicle form (doubles as the editor)
   const [editingVan, setEditingVan] = useState<Vehicle | null>(null);
@@ -324,18 +329,55 @@ export default function StaffSetup() {
 
   // -- hubs -----------------------------------------------------------------
 
+  /**
+   * Find the address on a map, so nobody has to type coordinates.
+   *
+   * The result is shown before it is saved — a geocoder will confidently return
+   * the wrong "Oak Road" in another state, and the only person who can catch
+   * that is the one who knows which corner they meant.
+   */
+  async function locateHub() {
+    setError('');
+    setFoundLabel('');
+    setLocating(true);
+
+    try {
+      const hit = await geocode(hubAddress);
+      if (!hit) {
+        setError(
+          'Could not find that address. Try adding the town or postcode, or enter the coordinates by hand below.',
+        );
+        return;
+      }
+      setHubLat(String(hit.lat));
+      setHubLng(String(hit.lng));
+      setFoundLabel(hit.label);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Address lookup failed.');
+    } finally {
+      setLocating(false);
+    }
+  }
+
   async function saveHub() {
     setError('');
     const lat = Number(hubLat);
     const lng = Number(hubLng);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      return setError('Latitude and longitude must be numbers, e.g. 37.3349 and -122.0090.');
+      return setError(
+        'This hub has no location yet. Type the address and press "Find it on the map".',
+      );
     }
     if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
       return setError('Latitude is -90 to 90; longitude is -180 to 180. They may be the wrong way round.');
     }
 
-    const payload = { name: hubName.trim(), lat, lng };
+    const payload = {
+      name: hubName.trim(),
+      address: hubAddress.trim() || null,
+      lat,
+      lng,
+    };
     const { error: e } = editingHub
       ? await supabase.from('hubs').update(payload).eq('id', editingHub.id)
       : await supabase.from('hubs').insert(payload);
@@ -348,8 +390,10 @@ export default function StaffSetup() {
   function clearHubForm() {
     setEditingHub(null);
     setHubName('');
+    setHubAddress('');
     setHubLat('');
     setHubLng('');
+    setFoundLabel('');
   }
 
   function deleteHub(hub: Hub) {
@@ -878,6 +922,9 @@ export default function StaffSetup() {
                   <View style={styles.grow}>
                     <Text style={styles.name}>{h.name}</Text>
                     <Text style={styles.fine}>
+                      {h.address ?? 'No description — families only see the name'}
+                    </Text>
+                    <Text style={styles.fine}>
                       {h.lat.toFixed(4)}, {h.lng.toFixed(4)}
                     </Text>
                     <Text style={styles.fine}>
@@ -894,6 +941,7 @@ export default function StaffSetup() {
                     onPress={() => {
                       setEditingHub(h);
                       setHubName(h.name);
+                      setHubAddress(h.address ?? '');
                       setHubLat(String(h.lat));
                       setHubLng(String(h.lng));
                     }}
@@ -906,7 +954,62 @@ export default function StaffSetup() {
 
           <SectionLabel>{editingHub ? `Edit ${editingHub.name}` : 'Add a hub'}</SectionLabel>
           <Card>
-            <Field label="Name" value={hubName} onChangeText={setHubName} placeholder="Rancho Clubhouse" />
+            <Field
+              label="Name"
+              value={hubName}
+              onChangeText={setHubName}
+              placeholder="Oak & Example"
+            />
+            <Text style={styles.fine}>
+              A short name families will recognise. This is what appears on their screens.
+            </Text>
+            <Field
+              label="Address"
+              value={hubAddress}
+              onChangeText={(v) => {
+                setHubAddress(v);
+                setFoundLabel('');
+              }}
+              placeholder="Corner of Oak Road and Example Way, Cupertino CA"
+            />
+            <Text style={styles.fine}>
+              What a parent would tell a taxi driver. Include the town — "Oak Road" alone will find
+              the wrong one.
+            </Text>
+
+            <Button
+              label="Find it on the map"
+              variant="secondary"
+              onPress={locateHub}
+              loading={locating}
+              disabled={hubAddress.trim().length < 4}
+            />
+
+            {foundLabel ? (
+              <View style={styles.found}>
+                <Text style={styles.foundTitle}>Found it</Text>
+                <Text style={styles.fine}>{foundLabel}</Text>
+                <Text style={styles.fine}>
+                  Check that is the right place before saving — a lookup will happily return an Oak
+                  Road three states away.
+                </Text>
+              </View>
+            ) : null}
+
+            <Button
+              label={editingHub ? 'Save changes' : 'Add hub'}
+              onPress={saveHub}
+              disabled={!hubName.trim() || !hubLat.trim() || !hubLng.trim()}
+            />
+
+            {/* Kept as an escape hatch. A rural corner with no street address
+                will not geocode, and then someone does have to drop a pin. */}
+            <Text style={styles.fine}>
+              {hubLat && hubLng
+                ? `Pinned at ${Number(hubLat).toFixed(4)}, ${Number(hubLng).toFixed(4)}`
+                : 'Not pinned yet.'}
+              {'  '}If the address will not resolve, you can enter the coordinates yourself:
+            </Text>
             <Row>
               <View style={styles.grow}>
                 <Field
@@ -927,14 +1030,7 @@ export default function StaffSetup() {
                 />
               </View>
             </Row>
-            <Text style={styles.fine}>
-              Long-press the spot in any maps app and copy the coordinate pair it shows.
-            </Text>
-            <Button
-              label={editingHub ? 'Save changes' : 'Add hub'}
-              onPress={saveHub}
-              disabled={!hubName.trim() || !hubLat.trim() || !hubLng.trim()}
-            />
+
             {editingHub ? <Button label="Cancel" variant="ghost" onPress={clearHubForm} /> : null}
           </Card>
         </>
@@ -1271,6 +1367,15 @@ const styles = StyleSheet.create({
     backgroundColor: theme.surfaceAlt,
   },
   stopName: { fontSize: 14, fontWeight: '700', color: theme.text },
+  found: {
+    backgroundColor: theme.surfaceAlt,
+    borderWidth: 1,
+    borderColor: theme.success,
+    borderRadius: 12,
+    padding: 12,
+    gap: 4,
+  },
+  foundTitle: { fontSize: 13, fontWeight: '700', color: theme.success },
   quote: { borderLeftWidth: 2, borderLeftColor: theme.accent, paddingLeft: 12, gap: 3 },
   quoteText: { fontSize: 12, color: theme.text, lineHeight: 18, fontStyle: 'italic' },
   cite: { fontSize: 11, color: theme.faint, fontWeight: '600' },

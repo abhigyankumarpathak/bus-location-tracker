@@ -13,6 +13,7 @@ import {
   ROUTE_TYPE_LABEL,
 } from '../../src/lib/types';
 import type { RiderStatus, StudentTripStatus } from '../../src/lib/types';
+import { ALERT_MINUTES, scheduleArrivalAlerts } from '../../src/lib/alerts';
 import { GpsDisabled } from '../../src/components/Disabled';
 import {
   Badge,
@@ -52,6 +53,34 @@ export default function ParentChildren() {
     ensureTodaysTrips().then(reload);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Blueprint §4.1: 15- and 5-minute alerts, for every linked child at once.
+  // A parent with two children on different hubs gets four alerts, each naming
+  // the child — "Your van" would be useless to them.
+  useEffect(() => {
+    if (ref.loading || childrenLoading) return;
+
+    const arrivals = rows
+      .map((row) => {
+        const child = children.find((c) => c.id === row.student_id);
+        if (!child) return null;
+
+        const stop = ref.stops.find((s) => s.id === row.pickup_stop_id);
+        const when = stop?.planned_arrival ?? stop?.planned_departure;
+        const hub = ref.stopName(row.pickup_stop_id);
+        if (!when || !hub) return null;
+
+        return {
+          id: row.id,
+          hubName: hub,
+          plannedArrival: when,
+          studentName: child.full_name.split(' ')[0],
+        };
+      })
+      .filter((a): a is NonNullable<typeof a> => a !== null);
+
+    scheduleArrivalAlerts(arrivals);
+  }, [rows, children, childrenLoading, ref.loading, ref.stops, ref.stopName]);
 
   if (childrenLoading || loading || ref.loading) return <Loading />;
 
@@ -106,6 +135,25 @@ export default function ParentChildren() {
 
                     <Timeline row={row} />
                     <Text style={styles.next}>{nextEvent(row.status)}</Text>
+
+                    {(() => {
+                      const stop = ref.stops.find((s) => s.id === row.pickup_stop_id);
+                      const due = stop?.planned_arrival ?? stop?.planned_departure;
+                      const hub = ref.stopName(row.pickup_stop_id);
+                      if (!due || !hub) {
+                        return (
+                          <Text style={styles.noTime}>
+                            No arrival time set for this hub yet, so no alerts for it.
+                          </Text>
+                        );
+                      }
+                      return (
+                        <Text style={styles.fine}>
+                          🔔 Van due at {hub} at {due.slice(0, 5)} — you will be alerted{' '}
+                          {ALERT_MINUTES.join(' and ')} minutes before.
+                        </Text>
+                      );
+                    })()}
 
                     {row.note ? <Text style={styles.note}>{row.note}</Text> : null}
                   </Card>
@@ -203,6 +251,7 @@ const styles = StyleSheet.create({
   grow: { flex: 1 },
   routeName: { fontSize: 16, fontWeight: '700', color: theme.text },
   fine: { fontSize: 12, color: theme.faint, lineHeight: 17 },
+  noTime: { fontSize: 12, color: theme.warn, lineHeight: 17 },
   next: { fontSize: 13, color: theme.muted },
   note: { fontSize: 12, color: theme.warn },
   timeline: { flexDirection: 'row', gap: 4, paddingVertical: 4 },

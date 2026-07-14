@@ -13,6 +13,13 @@ export default function ParentLayout() {
         }}
       />
       <Tabs.Screen
+        name="map"
+        options={{
+          title: 'Map',
+          tabBarIcon: ({ focused }) => <TabIcon glyph="🗺️" focused={focused} />,
+        }}
+      />
+      <Tabs.Screen
         name="change"
         options={{
           title: 'Daily change',
