@@ -131,6 +131,13 @@ begin
           'type',         rt.type,
           'status',       sts.status,
           'hub',          coalesce(h.name, sc.name),
+          -- WHO drove, and in WHICH van. Recorded here because the trip row
+          -- itself is purged for an ordinary day, and "who was driving my child
+          -- on the Tuesday" is exactly the question someone asks months later --
+          -- especially when it was a substitute. Without this the answer would
+          -- be gone.
+          'driver',       dp.full_name,
+          'vehicle',      v.label,
           'check_in',     sts.check_in_time,
           'boarded',      sts.board_time,
           'dropped_off',  sts.dropoff_time,
@@ -150,6 +157,11 @@ begin
     left join route_stops rs on rs.id = coalesce(sts.dropoff_stop_id, sts.pickup_stop_id)
     left join hubs h         on h.id = rs.hub_id
     left join schools sc     on sc.id = rs.school_id
+    -- The driver and van ACTUALLY used that day, from daily_trips -- not the
+    -- route's default. That is the whole point: a substitution is exactly what
+    -- gets forgotten, and it is what someone asks about afterwards.
+    left join profiles dp    on dp.id = t.driver_id
+    left join vehicles v     on v.id = t.vehicle_id
     where t.date between ws and we
     group by sts.student_id
   loop

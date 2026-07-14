@@ -43,6 +43,13 @@ work at a desk, which is what §7.3 was really asking for.
 **Two features are built but switched off**, because the blueprint excludes them:
 live GPS and payments.
 
+**One thing the blueprint did not ask for:** a weekly archive and purge. Every
+Sunday each student's week is rolled into a single report and sent to their
+family, and only then is the routine detail behind it deleted — so the database
+stops growing without bound, while incidents, no-shows and coordinator overrides
+are kept forever. An administrator turns it on with a switch. See
+[the weekly report and purge](#beyond-the-blueprint-the-weekly-report-and-purge).
+
 ---
 
 ## 1. Scope and MVP boundaries
