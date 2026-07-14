@@ -57,8 +57,17 @@ args = "npm run replit"
 waitForPort = 5000
 
 [deployment]
+# A published Replit serves the static export. Metro never runs in production.
+#
+# EXPO_PUBLIC_* values are compiled INTO the bundle at build time, so the
+# deployment's own Secrets must be set before this build runs -- deployment
+# Secrets are separate from workspace Secrets. Miss them and the published site
+# ships with empty credentials and shows the "Connect Supabase" screen.
+#
+# `serve` is a production dependency, not a dev one, because a production install
+# skips devDependencies and the run command needs it.
 build = ["sh", "-c", "npx expo export --platform web"]
-run = ["sh", "-c", "npx serve dist --listen 5000 --single"]
+run = ["sh", "-c", "./node_modules/.bin/serve dist --listen 5000 --single"]
 deploymentTarget = "autoscale"
 
 [languages.typescript]
