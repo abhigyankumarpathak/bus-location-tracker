@@ -11,6 +11,7 @@ import {
   isFinal,
 } from '../../src/lib/types';
 import type { StudentTripStatus } from '../../src/lib/types';
+import { ALERT_MINUTES, scheduleArrivalAlerts } from '../../src/lib/alerts';
 import { GpsDisabled } from '../../src/components/Disabled';
 import {
   Badge,
@@ -55,6 +56,25 @@ export default function StudentToday() {
   }, []);
 
   const mine = rows.filter((r) => r.student_id === me);
+
+  // Blueprint §4.1: alerts 15 and 5 minutes before the van is due. Driven off
+  // the planned arrival time, not GPS — see src/lib/alerts.ts.
+  useEffect(() => {
+    if (ref.loading) return;
+
+    const arrivals = mine
+      .map((row) => {
+        const stop = ref.stops.find((s) => s.id === row.pickup_stop_id);
+        const when = stop?.planned_arrival ?? stop?.planned_departure;
+        const hub = ref.stopName(row.pickup_stop_id);
+        // Nothing to alert on until the office has set a time for this hub.
+        if (!when || !hub) return null;
+        return { id: row.id, hubName: hub, plannedArrival: when };
+      })
+      .filter((a): a is NonNullable<typeof a> => a !== null);
+
+    scheduleArrivalAlerts(arrivals);
+  }, [mine, ref.loading, ref.stops, ref.stopName]);
 
   async function checkIn(row: StudentTripStatus) {
     setError('');
@@ -120,9 +140,18 @@ export default function StudentToday() {
             </Row>
 
             <Detail label="Hub" value={hub ?? 'Not assigned'} />
+            {/* The "which corner exactly" line. Only shown once the office has
+                filled it in — an empty row would be worse than none. */}
+            {ref.stopAddress(row.pickup_stop_id) ? (
+              <Text style={styles.address}>📍 {ref.stopAddress(row.pickup_stop_id)}</Text>
+            ) : null}
             <Detail
-              label="Planned time"
-              value={stop?.planned_departure?.slice(0, 5) ?? stop?.planned_arrival?.slice(0, 5) ?? '—'}
+              label="Van due"
+              value={
+                stop?.planned_arrival?.slice(0, 5) ??
+                stop?.planned_departure?.slice(0, 5) ??
+                'Time not set'
+              }
             />
             <Detail label="Vehicle" value={vehicle ? vehicle.label : 'Not assigned'} />
             {/* Blueprint §4.1 asks for the driver's FIRST name only — the
@@ -131,6 +160,19 @@ export default function StudentToday() {
               label="Driver"
               value={driverOf(trip?.driver_id)?.full_name.split(' ')[0] ?? 'Not assigned'}
             />
+
+            {/* Blueprint §4.1: alerts 15 and 5 minutes before the van is due. */}
+            {stop?.planned_arrival || stop?.planned_departure ? (
+              <Text style={styles.fine}>
+                🔔 You will be alerted {ALERT_MINUTES.join(' and ')} minutes before the van is due
+                at {hub}.
+              </Text>
+            ) : (
+              <Text style={styles.warn}>
+                The transport office has not set an arrival time for this hub yet, so there are no
+                alerts for it.
+              </Text>
+            )}
 
             {canCheckIn ? (
               <>
@@ -189,6 +231,8 @@ const styles = StyleSheet.create({
   grow: { flex: 1 },
   routeName: { fontSize: 17, fontWeight: '700', color: theme.text },
   fine: { fontSize: 12, color: theme.faint, lineHeight: 17 },
+  warn: { fontSize: 12, color: theme.warn, lineHeight: 17 },
+  address: { fontSize: 13, color: theme.muted, lineHeight: 18 },
   waiting: { fontSize: 13, color: theme.warn, lineHeight: 19 },
   done: { fontSize: 13, color: theme.success },
   detail: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },

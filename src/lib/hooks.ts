@@ -59,6 +59,21 @@ export function useReference() {
     [stops, hubs, schools],
   );
 
+  /**
+   * The "where exactly?" line for a stop — "Corner of Oak Road and Example Way".
+   * Null when the office has not filled it in, so screens can say so rather than
+   * printing an empty line.
+   */
+  const stopAddress = useCallback(
+    (stopId: string | null | undefined) => {
+      const stop = stops.find((s) => s.id === stopId);
+      if (!stop) return null;
+      if (stop.hub_id) return hubs.find((h) => h.id === stop.hub_id)?.address ?? null;
+      return schools.find((s) => s.id === stop.school_id)?.address ?? null;
+    },
+    [stops, hubs, schools],
+  );
+
   const stopCoords = useCallback(
     (stopId: string | null | undefined) => {
       const stop = stops.find((s) => s.id === stopId);
@@ -84,6 +99,7 @@ export function useReference() {
     loading,
     reload,
     stopName,
+    stopAddress,
     stopCoords,
     stopsFor: (routeId: string | null | undefined) =>
       stops.filter((s) => s.route_id === routeId).sort((a, b) => a.seq - b.seq),

@@ -94,6 +94,7 @@ export default function StaffSetup() {
   // Hub form (doubles as the editor)
   const [editingHub, setEditingHub] = useState<Hub | null>(null);
   const [hubName, setHubName] = useState('');
+  const [hubAddress, setHubAddress] = useState('');
   const [hubLat, setHubLat] = useState('');
   const [hubLng, setHubLng] = useState('');
 
@@ -335,7 +336,12 @@ export default function StaffSetup() {
       return setError('Latitude is -90 to 90; longitude is -180 to 180. They may be the wrong way round.');
     }
 
-    const payload = { name: hubName.trim(), lat, lng };
+    const payload = {
+      name: hubName.trim(),
+      address: hubAddress.trim() || null,
+      lat,
+      lng,
+    };
     const { error: e } = editingHub
       ? await supabase.from('hubs').update(payload).eq('id', editingHub.id)
       : await supabase.from('hubs').insert(payload);
@@ -348,6 +354,7 @@ export default function StaffSetup() {
   function clearHubForm() {
     setEditingHub(null);
     setHubName('');
+    setHubAddress('');
     setHubLat('');
     setHubLng('');
   }
@@ -878,6 +885,9 @@ export default function StaffSetup() {
                   <View style={styles.grow}>
                     <Text style={styles.name}>{h.name}</Text>
                     <Text style={styles.fine}>
+                      {h.address ?? 'No description — families only see the name'}
+                    </Text>
+                    <Text style={styles.fine}>
                       {h.lat.toFixed(4)}, {h.lng.toFixed(4)}
                     </Text>
                     <Text style={styles.fine}>
@@ -894,6 +904,7 @@ export default function StaffSetup() {
                     onPress={() => {
                       setEditingHub(h);
                       setHubName(h.name);
+                      setHubAddress(h.address ?? '');
                       setHubLat(String(h.lat));
                       setHubLng(String(h.lng));
                     }}
@@ -906,7 +917,25 @@ export default function StaffSetup() {
 
           <SectionLabel>{editingHub ? `Edit ${editingHub.name}` : 'Add a hub'}</SectionLabel>
           <Card>
-            <Field label="Name" value={hubName} onChangeText={setHubName} placeholder="Rancho Clubhouse" />
+            <Field
+              label="Name"
+              value={hubName}
+              onChangeText={setHubName}
+              placeholder="Oak & Example"
+            />
+            <Text style={styles.fine}>
+              A short name families will recognise. This is what appears on their screens.
+            </Text>
+            <Field
+              label="Where it is"
+              value={hubAddress}
+              onChangeText={setHubAddress}
+              placeholder="Corner of Oak Road and Example Way"
+            />
+            <Text style={styles.fine}>
+              The description a parent would give a taxi driver. Optional, but it is what stops
+              someone waiting on the wrong corner.
+            </Text>
             <Row>
               <View style={styles.grow}>
                 <Field
