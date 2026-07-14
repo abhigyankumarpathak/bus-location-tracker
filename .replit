@@ -75,3 +75,6 @@ pattern = "**/*.{ts,tsx}"
 
 [languages.typescript.languageServer]
 start = "typescript-language-server --stdio"
+
+[agent]
+expertMode = true
