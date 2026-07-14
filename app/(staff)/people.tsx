@@ -101,6 +101,21 @@ export default function StaffPeople() {
     }, [load]),
   );
 
+  // ...and keep refetching while the invite list is actually on screen.
+  //
+  // A code stops being unused at a moment that happens on someone ELSE's phone.
+  // The focus refetch above misses that entirely for the admin who hands out a
+  // code and then sits here waiting for the person to appear: the redeemed code
+  // stayed listed under "Unused codes", still shareable, until they navigated
+  // away and back. Poll instead, so a code moves to "Recently used" on its own.
+  useFocusEffect(
+    useCallback(() => {
+      if (filter !== 'invites') return;
+      const timer = setInterval(load, 15_000);
+      return () => clearInterval(timer);
+    }, [filter, load]),
+  );
+
   async function createInvite() {
     setError('');
     setCreating(true);
@@ -201,7 +216,15 @@ export default function StaffPeople() {
     await load();
   }
 
-  const openInvites = invites.filter((i) => !i.used_at && !i.revoked_at);
+  // "Unused" has to mean "will still work if I send it". A redeemed code leaves
+  // this list the moment the database stamps used_at, and an expired one is just
+  // as dead — offering "Send it to them" for either hands out a code that signup
+  // will refuse.
+  const now = Date.now();
+  const live = (i: Invite) => !i.used_at && !i.revoked_at;
+  const openInvites = invites.filter((i) => live(i) && new Date(i.expires_at).getTime() > now);
+  const expiredInvites = invites.filter((i) => live(i) && new Date(i.expires_at).getTime() <= now);
+  const usedInvites = invites.filter((i) => i.used_at);
 
   const visible = people.filter((p) => {
     if (p.role === 'admin') return false;
@@ -337,26 +360,49 @@ export default function StaffPeople() {
             </Card>
           ))}
 
-          <SectionLabel>Recently used</SectionLabel>
-          {invites.filter((i) => i.used_at).length === 0 ? (
-            <Empty>Nobody has redeemed an invite yet.</Empty>
-          ) : (
-            invites
-              .filter((i) => i.used_at)
-              .slice(0, 8)
-              .map((invite) => (
+          {expiredInvites.length ? (
+            <>
+              <SectionLabel>Expired · {expiredInvites.length}</SectionLabel>
+              {expiredInvites.map((invite) => (
                 <Card key={invite.id}>
                   <Row style={styles.between}>
                     <View style={styles.grow}>
-                      <Text style={styles.name}>{invite.full_name || invite.code}</Text>
+                      <Text style={styles.code} selectable>
+                        {invite.code}
+                      </Text>
                       <Text style={styles.fine}>
-                        Joined {new Date(invite.used_at!).toLocaleDateString()}
+                        {invite.full_name || 'Unnamed'} · expired{' '}
+                        {new Date(invite.expires_at).toLocaleDateString()}
+                      </Text>
+                      <Text style={styles.fine}>
+                        Signup refuses it. Invite them again to issue a fresh code.
                       </Text>
                     </View>
-                    <Badge label={invite.role} tone="success" />
+                    <Badge label="expired" tone="danger" />
                   </Row>
                 </Card>
-              ))
+              ))}
+            </>
+          ) : null}
+
+          <SectionLabel>Recently used</SectionLabel>
+          {usedInvites.length === 0 ? (
+            <Empty>Nobody has redeemed an invite yet.</Empty>
+          ) : (
+            usedInvites.slice(0, 8).map((invite) => (
+              <Card key={invite.id}>
+                <Row style={styles.between}>
+                  <View style={styles.grow}>
+                    <Text style={styles.name}>{invite.full_name || invite.code}</Text>
+                    <Text style={styles.fine}>
+                      Code {invite.code} · used {new Date(invite.used_at!).toLocaleDateString()}
+                    </Text>
+                    <Text style={styles.fine}>This code cannot be used again.</Text>
+                  </View>
+                  <Badge label={invite.role} tone="success" />
+                </Row>
+              </Card>
+            ))
           )}
         </>
       ) : (
