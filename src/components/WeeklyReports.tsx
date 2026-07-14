@@ -106,10 +106,15 @@ export function WeeklyReports({
                         </Text>
                         <Text style={styles.fine}>
                           {ride.hub ?? 'No hub'}
-                          {ride.boarded
-                            ? ` · boarded ${time(ride.boarded)}`
-                            : ''}
+                          {ride.boarded ? ` · boarded ${time(ride.boarded)}` : ''}
                           {ride.dropped_off ? ` · dropped ${time(ride.dropped_off)}` : ''}
+                        </Text>
+                        {/* Who actually drove, and in which van — including a
+                            substitute. The trip row itself is purged for an
+                            ordinary day, so this is the only place it survives. */}
+                        <Text style={styles.fine}>
+                          {ride.driver ? `Driver: ${ride.driver}` : 'Driver not recorded'}
+                          {ride.vehicle ? ` · ${ride.vehicle}` : ''}
                         </Text>
                         {ride.note ? <Text style={styles.note}>{ride.note}</Text> : null}
                       </View>

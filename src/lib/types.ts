@@ -260,6 +260,9 @@ export interface WeeklyReport {
     type: string;
     status: RiderStatus;
     hub: string | null;
+    /** Who actually drove that day — including a substitute. */
+    driver: string | null;
+    vehicle: string | null;
     check_in: string | null;
     boarded: string | null;
     dropped_off: string | null;
