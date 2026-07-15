@@ -56,16 +56,18 @@ export default function ParentMap() {
   const stops = ref.stopsFor(routeId);
 
   // The hub each of this parent's children uses, so their own stop stands out
-  // from the rest of the line.
+  // from the rest of the line. This is the HUB, not the school: afternoon runs
+  // school -> hub, so pickup_stop_id there is the school. hubStopId picks
+  // whichever of pickup/drop-off is the hub, in either direction.
   const myStopIds = useMemo(
     () =>
       new Set(
         rows
           .filter((r) => children.some((c) => c.id === r.student_id))
-          .map((r) => r.pickup_stop_id)
+          .map((r) => ref.hubStopId(r.pickup_stop_id, r.dropoff_stop_id))
           .filter(Boolean) as string[],
       ),
-    [rows, children],
+    [rows, children, ref],
   );
 
   const markers = useMemo<MapMarker[]>(() => {
