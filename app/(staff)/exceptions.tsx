@@ -10,7 +10,14 @@ import {
   RIDER_STATUS_TONE,
   isFinal,
 } from '../../src/lib/types';
-import type { ChangeRequest, Incident, Profile, RiderStatus, StudentTripStatus } from '../../src/lib/types';
+import type {
+  AssignmentRequest,
+  ChangeRequest,
+  Incident,
+  Profile,
+  RiderStatus,
+  StudentTripStatus,
+} from '../../src/lib/types';
 import {
   Badge,
   Button,
@@ -53,6 +60,7 @@ export default function StaffExceptions() {
   const { rows, trips, loading, reload } = useTripStatuses();
 
   const [requests, setRequests] = useState<ChangeRequest[]>([]);
+  const [assignmentReqs, setAssignmentReqs] = useState<AssignmentRequest[]>([]);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [people, setPeople] = useState<Profile[]>([]);
   const [error, setError] = useState('');
@@ -61,12 +69,14 @@ export default function StaffExceptions() {
   const [reason, setReason] = useState('');
 
   const load = useCallback(async () => {
-    const [{ data: cr }, { data: inc }, { data: pr }] = await Promise.all([
+    const [{ data: cr }, { data: ar }, { data: inc }, { data: pr }] = await Promise.all([
       supabase.from('change_requests').select('*').eq('approval', 'pending').order('created_at'),
+      supabase.from('assignment_requests').select('*').eq('status', 'pending').order('created_at'),
       supabase.from('incidents').select('*').is('resolved_at', null).order('created_at', { ascending: false }),
       supabase.from('profiles').select('*'),
     ]);
     setRequests((cr as ChangeRequest[]) ?? []);
+    setAssignmentReqs((ar as AssignmentRequest[]) ?? []);
     setIncidents((inc as Incident[]) ?? []);
     setPeople((pr as Profile[]) ?? []);
   }, []);
@@ -107,6 +117,24 @@ export default function StaffExceptions() {
       });
     }
 
+    await load();
+    await reload();
+  }
+
+  async function decideAssignment(req: AssignmentRequest, approve: boolean) {
+    setError('');
+    // review_assignment_request applies the change to the student and notifies
+    // the parent, all in one transaction — the client never writes the students
+    // table directly.
+    const { error: e } = await supabase.rpc('review_assignment_request', {
+      request_id: req.id,
+      approve,
+      note: null,
+    });
+    if (e) {
+      setError(e.message);
+      return;
+    }
     await load();
     await reload();
   }
@@ -157,7 +185,15 @@ export default function StaffExceptions() {
   });
 
   const nothing =
-    !stuck.length && !noShows.length && !missing.length && !requests.length && !incidents.length;
+    !stuck.length &&
+    !noShows.length &&
+    !missing.length &&
+    !requests.length &&
+    !assignmentReqs.length &&
+    !incidents.length;
+
+  const schoolName = (id: string | null) => ref.schoolOf(id)?.name ?? 'Not set';
+  const hubName = (id: string | null) => ref.hubOf(id)?.name ?? 'Not set';
 
   function renderRow(row: StudentTripStatus, tone: 'danger' | 'warn') {
     const trip = trips.find((t) => t.id === row.trip_id);
@@ -268,6 +304,46 @@ export default function StaffExceptions() {
                   label="Reject"
                   variant="danger"
                   onPress={() => decide(r, false)}
+                  style={styles.grow}
+                />
+              </Row>
+            </Card>
+          ))}
+        </>
+      ) : null}
+
+      {assignmentReqs.length > 0 ? (
+        <>
+          <SectionLabel>Hub & school changes awaiting approval</SectionLabel>
+          {assignmentReqs.map((r) => (
+            <Card key={r.id}>
+              <Row style={styles.between}>
+                <View style={styles.grow}>
+                  <Text style={styles.name}>{nameOf(r.student_id)}</Text>
+                  <Text style={styles.fine}>
+                    asked by {nameOf(r.requested_by)}
+                    {r.reason ? ` · ${r.reason}` : ''}
+                  </Text>
+                </View>
+                <Badge label="Pending" tone="warn" />
+              </Row>
+              <Text style={styles.fine}>School → {schoolName(r.school_id)}</Text>
+              <Text style={styles.fine}>Morning hub → {hubName(r.morning_hub_id)}</Text>
+              <Text style={styles.fine}>Afternoon hub → {hubName(r.afternoon_hub_id)}</Text>
+              <Text style={styles.fine}>
+                Approving updates the student. If the new hub is not on their current route, re-seat
+                them on the Setup tab.
+              </Text>
+              <Row>
+                <Button
+                  label="Approve"
+                  onPress={() => decideAssignment(r, true)}
+                  style={styles.grow}
+                />
+                <Button
+                  label="Reject"
+                  variant="danger"
+                  onPress={() => decideAssignment(r, false)}
                   style={styles.grow}
                 />
               </Row>
