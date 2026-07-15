@@ -193,6 +193,22 @@ export interface ChangeRequest {
   created_at: string;
 }
 
+/** A parent's pending request to change a child's hubs and school. */
+export interface AssignmentRequest {
+  id: string;
+  student_id: string;
+  requested_by: string | null;
+  school_id: string | null;
+  morning_hub_id: string | null;
+  afternoon_hub_id: string | null;
+  reason: string | null;
+  status: ApprovalStatus;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  review_note: string | null;
+  created_at: string;
+}
+
 export interface Incident {
   id: string;
   trip_id: string | null;

@@ -12,6 +12,7 @@ import {
 } from '../../src/lib/types';
 import type { DailyTrip, StudentTripStatus } from '../../src/lib/types';
 import { FamilyLinks } from '../../src/components/FamilyLinks';
+import { StudentAssignment } from '../../src/components/StudentAssignment';
 import { WeeklyReports } from '../../src/components/WeeklyReports';
 import { PaymentsLocked } from '../../src/components/Disabled';
 import {
@@ -69,6 +70,15 @@ export default function ParentMore() {
 
       <SectionLabel>Family</SectionLabel>
       <FamilyLinks perspective="parent" />
+
+      {children.length > 0 ? (
+        <>
+          <SectionLabel>Hub & school</SectionLabel>
+          {children.map((c) => (
+            <StudentAssignment key={c.id} child={c} />
+          ))}
+        </>
+      ) : null}
 
       {/* The permanent record. Recent trips (below) are cleared after a few
           weeks; these reports are not. */}

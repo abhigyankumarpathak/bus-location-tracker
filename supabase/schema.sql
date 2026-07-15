@@ -329,6 +329,30 @@ create table change_requests (
 );
 create index change_requests_open_idx on change_requests (date, approval);
 
+-- A parent's request to change WHERE their child rides from: the morning and
+-- afternoon hubs and the school. Unlike change_requests (a one-day exception),
+-- this changes the student's standing assignment, so it always needs a person to
+-- approve it -- there is no cutoff and no auto-approval. The row holds the whole
+-- desired assignment, prefilled from the current one, so approving it applies all
+-- three fields at once regardless of which the parent actually touched. The
+-- office still decides which route/bus serves a hub; this only moves the child to
+-- a different hub, which is how they end up on a different bus.
+create table assignment_requests (
+  id               uuid primary key default gen_random_uuid(),
+  student_id       uuid not null references profiles on delete cascade,
+  requested_by     uuid references profiles on delete set null,
+  school_id        uuid references schools on delete set null,
+  morning_hub_id   uuid references hubs on delete set null,
+  afternoon_hub_id uuid references hubs on delete set null,
+  reason           text,
+  status           approval_status not null default 'pending',
+  reviewed_by      uuid references profiles on delete set null,
+  reviewed_at      timestamptz,
+  review_note      text,
+  created_at       timestamptz not null default now()
+);
+create index assignment_requests_open_idx on assignment_requests (status, created_at);
+
 create table incidents (
   id          uuid primary key default gen_random_uuid(),
   trip_id     uuid references daily_trips on delete cascade,
@@ -1095,6 +1119,84 @@ end;
 $$;
 grant execute on function delete_trip(uuid, text) to authenticated;
 
+-- Approve or reject a parent's hub/school change, and apply it on approval.
+--
+-- Staff only. Approving writes the requested hubs and school straight onto the
+-- student's record; from then on the daily generation seats them from the new
+-- hubs. It does NOT move them onto a route by itself -- which route serves a hub
+-- is the office's call, so a coordinator may still need to re-seat the child with
+-- the route tools. Either way the parent is told the outcome.
+create or replace function review_assignment_request(request_id uuid, approve boolean, note text default null)
+returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  req assignment_requests%rowtype;
+begin
+  if not is_staff() then
+    raise exception 'Only transport staff can review assignment changes.';
+  end if;
+
+  select * into req from assignment_requests where id = request_id;
+  if not found then
+    raise exception 'That request no longer exists.';
+  end if;
+  if req.status <> 'pending' then
+    raise exception 'That request has already been reviewed.';
+  end if;
+
+  update assignment_requests
+     set status = case when approve then 'approved'::approval_status else 'rejected' end,
+         reviewed_by = auth.uid(),
+         reviewed_at = now(),
+         review_note = note
+   where id = request_id;
+
+  if approve then
+    update students
+       set school_id = req.school_id,
+           morning_hub_id = req.morning_hub_id,
+           afternoon_hub_id = req.afternoon_hub_id
+     where student_id = req.student_id;
+  end if;
+
+  if req.requested_by is not null then
+    insert into notifications (user_id, title, body, kind)
+    values (
+      req.requested_by,
+      case when approve then 'Assignment change approved'
+           else 'Assignment change not approved' end,
+      case when approve
+           then 'The transport office approved the hub/school change for your child.'
+           else coalesce(nullif(trim(note), ''),
+                         'The transport office did not approve the requested change.') end,
+      'approval'
+    );
+  end if;
+end;
+$$;
+grant execute on function review_assignment_request(uuid, boolean, text) to authenticated;
+
+-- A new hub/school request needs a person, so tell the office it is waiting.
+create or replace function notify_on_assignment_request() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  child_name text;
+begin
+  select full_name into child_name from profiles where id = new.student_id;
+  insert into notifications (user_id, title, body, kind)
+  select p.id,
+         'Assignment change requested',
+         coalesce(nullif(child_name, ''), 'A student')
+           || ' has a hub/school change waiting for your approval.',
+         'approval'
+  from profiles p where p.role in ('coordinator', 'admin') and p.status = 'active';
+  return new;
+end;
+$$;
+
+create trigger on_assignment_request_created after insert on assignment_requests
+  for each row execute function notify_on_assignment_request();
+
 -- Delay reported -> affected parents (blueprint §6.2).
 create or replace function notify_on_incident() returns trigger
 language plpgsql security definer set search_path = public as $$
@@ -1197,6 +1299,7 @@ alter table daily_trips         enable row level security;
 alter table student_trip_status enable row level security;
 alter table trip_stop_progress  enable row level security;
 alter table change_requests     enable row level security;
+alter table assignment_requests enable row level security;
 alter table incidents           enable row level security;
 alter table announcements       enable row level security;
 alter table notifications       enable row level security;
@@ -1372,6 +1475,22 @@ create policy "request a change" on change_requests for insert with check (
   and (student_id = auth.uid() or is_guardian_of(student_id))
 );
 create policy "staff decide changes" on change_requests for all
+  using (is_staff()) with check (is_staff());
+
+-- assignment_requests: a guardian proposes and tracks changes for their own
+-- child; staff see and act on all. The apply-on-approval happens inside
+-- review_assignment_request(), so there is no client-side write of the students
+-- table here.
+create policy "read own assignment requests" on assignment_requests for select using (
+  (is_active() and is_guardian_of(student_id)) or is_staff()
+);
+create policy "propose assignment change" on assignment_requests for insert with check (
+  is_active() and requested_by = auth.uid() and is_guardian_of(student_id)
+);
+create policy "cancel own pending assignment" on assignment_requests for delete using (
+  requested_by = auth.uid() and status = 'pending'
+);
+create policy "staff manage assignment requests" on assignment_requests for all
   using (is_staff()) with check (is_staff());
 
 -- incidents
