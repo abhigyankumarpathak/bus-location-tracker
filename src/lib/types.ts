@@ -43,6 +43,11 @@ export interface Organization {
   afternoon_cutoff: string;
   checkin_window_min: number;
   /**
+   * How riders are marked on board. 'manual' (the driver taps each student) is
+   * the only mode built; 'scan' (NFC/QR self check-in) is reserved for later.
+   */
+  attendance_mode: 'manual' | 'scan';
+  /**
    * Weeks of full operational detail to keep. Older routine data is purged once
    * it has been archived into a weekly report and sent to the family. Incidents
    * and overrides are kept regardless of this setting.

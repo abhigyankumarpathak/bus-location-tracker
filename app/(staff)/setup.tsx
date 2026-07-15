@@ -458,6 +458,7 @@ export default function StaffSetup() {
     gps_enabled?: boolean;
     payments_enabled?: boolean;
     retention_weeks?: number;
+    attendance_mode?: 'manual' | 'scan';
   }) {
     setError('');
     const { error: e } = await supabase.from('organization').update(patch).eq('id', 1);
@@ -1287,6 +1288,36 @@ export default function StaffSetup() {
               Two features are fully built but switched off, because the MVP blueprint excludes them
               from the first release. Nothing was cut — these flip them on.
             </Text>
+          </Card>
+
+          <Card>
+            <View style={styles.grow}>
+              <Text style={styles.name}>Attendance</Text>
+              <Text style={styles.fine}>
+                How riders are marked on board. Manual: the driver taps each student. Scan (NFC/QR):
+                students check themselves on, so the driver can keep their attention on driving.
+              </Text>
+            </View>
+            <Row style={styles.wrap}>
+              <Button
+                label="Manual"
+                variant={(org?.attendance_mode ?? 'manual') === 'manual' ? 'primary' : 'secondary'}
+                disabled={!isAdmin}
+                onPress={() => setFlag({ attendance_mode: 'manual' })}
+              />
+              <Button
+                label="Scan (NFC/QR)"
+                variant={org?.attendance_mode === 'scan' ? 'primary' : 'secondary'}
+                disabled={!isAdmin}
+                onPress={() => setFlag({ attendance_mode: 'scan' })}
+              />
+            </Row>
+            {org?.attendance_mode === 'scan' ? (
+              <Text style={styles.warn}>
+                Scanning is not built yet — the driver still marks attendance by hand for now. This
+                records the intent so the switch is ready when NFC/QR ships.
+              </Text>
+            ) : null}
           </Card>
 
           <Card>

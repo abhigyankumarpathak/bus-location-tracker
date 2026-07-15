@@ -98,7 +98,15 @@ create table organization (
   afternoon_cutoff   time not null default '13:30',
 
   -- Blueprint §4.1: check-in is only allowed within a window before the trip.
-  checkin_window_min int not null default 60
+  checkin_window_min int not null default 60,
+
+  -- How riders are marked on board.
+  --   'manual' — the driver taps each student. The MVP behaviour, and the only
+  --              one actually built.
+  --   'scan'   — students check themselves on by NFC or QR, so the driver keeps
+  --              their attention on driving. Reserved, not yet implemented; the
+  --              flag records the office's intent without changing behaviour.
+  attendance_mode text not null default 'manual' check (attendance_mode in ('manual', 'scan'))
 );
 
 insert into organization (id) values (1);
