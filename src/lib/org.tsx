@@ -24,12 +24,15 @@ export function useOrg() {
   return value;
 }
 
-/** Convenience: the two blueprint-gated features. */
+/** Convenience: the two blueprint-gated features, plus the attendance mode. */
 export function useFeatures() {
   const { org } = useOrg();
   return {
     gpsEnabled: org?.gps_enabled ?? false,
     paymentsEnabled: org?.payments_enabled ?? false,
+    // 'manual' is the only mode actually built; 'scan' is reserved for NFC/QR
+    // self check-in later. Defaults to manual so nothing changes until it ships.
+    attendanceMode: org?.attendance_mode ?? 'manual',
   };
 }
 
