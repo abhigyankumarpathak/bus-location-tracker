@@ -974,6 +974,99 @@ $$;
 create trigger on_rider_status_audit after update on student_trip_status
   for each row execute function log_rider_status();
 
+-- ---------------------------------------------------------------------------
+-- Admin trip controls: re-run and delete, both requiring a reason.
+--
+-- These exist for testing and for correcting a trip that went wrong. Both are
+-- destructive to a trip's recorded history, so both are:
+--   * admin only -- not coordinators;
+--   * refused without a reason -- enforced HERE, in the database, not just in
+--     the UI, so it cannot be skipped by calling the API directly;
+--   * written to audit_logs, which is how anyone later can see a trip was reset
+--     or removed, by whom, and why.
+-- ---------------------------------------------------------------------------
+
+-- Put a trip back to the start: scheduled, not started, every rider back to
+-- 'scheduled' with their check-in/board/drop-off times and notes cleared. The
+-- students, driver, vehicle, stops, and planned times stay -- it is the same
+-- trip, run again from the top.
+create or replace function rerun_trip(target_trip uuid, reason text)
+returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  trimmed text := trim(coalesce(reason, ''));
+  before jsonb;
+begin
+  if not is_admin() then
+    raise exception 'Only an administrator can re-run a trip.';
+  end if;
+  if trimmed = '' then
+    raise exception 'A reason is required to re-run a trip.';
+  end if;
+
+  select jsonb_build_object('status', status, 'started_at', started_at, 'ended_at', ended_at)
+    into before
+  from daily_trips where id = target_trip;
+
+  if before is null then
+    raise exception 'That trip no longer exists.';
+  end if;
+
+  update student_trip_status
+     set status = 'scheduled',
+         check_in_time = null,
+         board_time = null,
+         dropoff_time = null,
+         note = null,
+         updated_by = auth.uid(),
+         updated_at = now()
+   where trip_id = target_trip;
+
+  update daily_trips
+     set status = 'scheduled',
+         started_at = null,
+         ended_at = null,
+         delay_minutes = null,
+         delay_reason = null
+   where id = target_trip;
+
+  insert into audit_logs (entity_type, entity_id, action, old_value, new_value, reason, changed_by)
+  values ('daily_trips', target_trip, 'rerun', before,
+          jsonb_build_object('status', 'scheduled'), trimmed, auth.uid());
+end;
+$$;
+grant execute on function rerun_trip(uuid, text) to authenticated;
+
+-- Remove a trip entirely. student_trip_status rows cascade with it. The audit
+-- row is written BEFORE the delete, capturing what was there, because after the
+-- delete there is nothing left to point at.
+create or replace function delete_trip(target_trip uuid, reason text)
+returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  trimmed text := trim(coalesce(reason, ''));
+  before jsonb;
+begin
+  if not is_admin() then
+    raise exception 'Only an administrator can delete a trip.';
+  end if;
+  if trimmed = '' then
+    raise exception 'A reason is required to delete a trip.';
+  end if;
+
+  select to_jsonb(t) into before from daily_trips t where id = target_trip;
+  if before is null then
+    raise exception 'That trip no longer exists.';
+  end if;
+
+  insert into audit_logs (entity_type, entity_id, action, old_value, new_value, reason, changed_by)
+  values ('daily_trips', target_trip, 'delete', before, null, trimmed, auth.uid());
+
+  delete from daily_trips where id = target_trip;
+end;
+$$;
+grant execute on function delete_trip(uuid, text) to authenticated;
+
 -- Delay reported -> affected parents (blueprint §6.2).
 create or replace function notify_on_incident() returns trigger
 language plpgsql security definer set search_path = public as $$

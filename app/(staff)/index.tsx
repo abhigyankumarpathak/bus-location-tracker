@@ -36,7 +36,7 @@ import {
  * assignments, communication, and the daily closeout.
  */
 export default function StaffDashboard() {
-  const { profile, signOut, lockStaff } = useAuth();
+  const { profile, isAdmin, signOut, lockStaff } = useAuth();
   const ref = useReference();
   const { rows, trips, loading, reload } = useTripStatuses();
 
@@ -45,6 +45,33 @@ export default function StaffDashboard() {
   const [body, setBody] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+
+  // Admin-only re-run / delete of a trip. Both demand a reason before they run,
+  // so the trip board reveals an inline reason box rather than acting on the
+  // first tap. (Alert.prompt is iOS-only; a coordinator on the web build needs a
+  // real field.) The database refuses either action without a reason too — this
+  // is the prompt, not the enforcement.
+  const [action, setAction] = useState<{ tripId: string; kind: 'rerun' | 'delete' } | null>(null);
+  const [reason, setReason] = useState('');
+  const [actionBusy, setActionBusy] = useState(false);
+
+  async function runTripAction() {
+    if (!action) return;
+    setActionBusy(true);
+    setError('');
+    const { error: e } = await supabase.rpc(
+      action.kind === 'rerun' ? 'rerun_trip' : 'delete_trip',
+      { target_trip: action.tripId, reason: reason.trim() },
+    );
+    setActionBusy(false);
+    if (e) {
+      setError(e.message);
+      return;
+    }
+    setAction(null);
+    setReason('');
+    await reload();
+  }
 
   const loadDrivers = useCallback(async () => {
     const { data } = await supabase
@@ -252,6 +279,64 @@ export default function StaffDashboard() {
                 ))}
               </View>
             ) : null}
+
+            {/* Re-run and delete are the admin's testing and correction tools,
+                so they are gated on the admin role — the same gate the database
+                enforces. */}
+            {isAdmin ? (
+              action?.tripId === trip.id ? (
+                <View style={styles.adminBox}>
+                  <Text style={styles.fine}>
+                    {action.kind === 'rerun'
+                      ? 'Re-run puts this trip back to Scheduled and clears every rider to their starting state. Say why — it is logged.'
+                      : 'Delete removes this trip and every rider record on it. Say why — it is logged.'}
+                  </Text>
+                  <Field
+                    label="Reason"
+                    value={reason}
+                    onChangeText={setReason}
+                    placeholder={action.kind === 'rerun' ? 'Re-testing the driver flow' : 'Created in error'}
+                  />
+                  <Row style={styles.wrap}>
+                    <Button
+                      label={action.kind === 'rerun' ? 'Confirm re-run' : 'Confirm delete'}
+                      variant={action.kind === 'rerun' ? 'primary' : 'danger'}
+                      loading={actionBusy}
+                      disabled={!reason.trim()}
+                      onPress={runTripAction}
+                      style={styles.grow}
+                    />
+                    <Button
+                      label="Cancel"
+                      variant="ghost"
+                      onPress={() => {
+                        setAction(null);
+                        setReason('');
+                      }}
+                    />
+                  </Row>
+                </View>
+              ) : (
+                <Row style={styles.wrap}>
+                  <Button
+                    label="Re-run"
+                    variant="secondary"
+                    onPress={() => {
+                      setReason('');
+                      setAction({ tripId: trip.id, kind: 'rerun' });
+                    }}
+                  />
+                  <Button
+                    label="Delete"
+                    variant="danger"
+                    onPress={() => {
+                      setReason('');
+                      setAction({ tripId: trip.id, kind: 'delete' });
+                    }}
+                  />
+                </Row>
+              )
+            ) : null}
           </Card>
         );
       })}
@@ -324,6 +409,7 @@ const styles = StyleSheet.create({
   fine: { fontSize: 12, color: theme.faint, lineHeight: 17 },
   warn: { fontSize: 12, color: theme.warn, lineHeight: 17 },
   riders: { flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
+  adminBox: { gap: 8, borderTopWidth: 1, borderTopColor: theme.border, paddingTop: 12 },
   urgent: { borderColor: theme.danger, backgroundColor: '#2A1D1D' },
   urgentTitle: { fontSize: 15, fontWeight: '700', color: theme.danger },
   urgentBody: { fontSize: 13, color: theme.text, lineHeight: 19 },
