@@ -275,15 +275,32 @@ export default function DriverTrip() {
               const done = isFinal(row.status);
               const onboard = ['boarded', 'in_transit'].includes(row.status);
 
+              // A student sits at TWO stops on a route: the one they board at and
+              // the one they get off at. Morning that is hub -> school; afternoon
+              // it is school -> hub. Which card this is decides which actions
+              // belong here — boarding controls only where they board, drop-off
+              // controls only where they get off. Without this, a boarded student
+              // showed "Dropped off safely" at BOTH stops.
+              const isPickupStop = row.pickup_stop_id === stop.id;
+              const isDropoffStop = row.dropoff_stop_id === stop.id;
+              const showBoarding = trip.status === 'active' && !done && isPickupStop && !onboard;
+              const showDropoff = trip.status === 'active' && !done && isDropoffStop && onboard;
+              const fmt = (t: string) =>
+                new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
               return (
                 <Card key={row.id} style={done ? styles.resolved : undefined}>
                   <Row style={styles.between}>
                     <View style={styles.grow}>
                       <Text style={styles.studentName}>{nameOf(row.student_id)}</Text>
                       <Text style={styles.fine}>
-                        {row.check_in_time
-                          ? `Checked in ${new Date(row.check_in_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} — they say they are at the hub`
-                          : 'Not checked in'}
+                        {isPickupStop
+                          ? row.check_in_time
+                            ? `Checked in ${fmt(row.check_in_time)} — they say they are waiting`
+                            : 'Not checked in'
+                          : row.board_time
+                            ? `On board since ${fmt(row.board_time)} — drop off here`
+                            : 'Boards earlier on this route'}
                       </Text>
                     </View>
                     <Badge
@@ -292,38 +309,36 @@ export default function DriverTrip() {
                     />
                   </Row>
 
-                  {trip.status === 'active' && !done ? (
-                    onboard ? (
-                      <Row style={styles.wrap}>
-                        {DROP_ACTIONS.map((a) => (
-                          <Button
-                            key={a.status}
-                            label={a.label}
-                            variant={a.variant}
-                            loading={busyId === row.id}
-                            style={styles.action}
-                            onPress={() =>
-                              a.status === 'unable_to_drop_off'
-                                ? confirmUnableToDrop(row)
-                                : setStatus(row, a.status)
-                            }
-                          />
-                        ))}
-                      </Row>
-                    ) : (
-                      <Row style={styles.wrap}>
-                        {ACTIONS.map((a) => (
-                          <Button
-                            key={a.status}
-                            label={a.label}
-                            variant={a.variant}
-                            loading={busyId === row.id}
-                            style={styles.action}
-                            onPress={() => setStatus(row, a.status)}
-                          />
-                        ))}
-                      </Row>
-                    )
+                  {showBoarding ? (
+                    <Row style={styles.wrap}>
+                      {ACTIONS.map((a) => (
+                        <Button
+                          key={a.status}
+                          label={a.label}
+                          variant={a.variant}
+                          loading={busyId === row.id}
+                          style={styles.action}
+                          onPress={() => setStatus(row, a.status)}
+                        />
+                      ))}
+                    </Row>
+                  ) : showDropoff ? (
+                    <Row style={styles.wrap}>
+                      {DROP_ACTIONS.map((a) => (
+                        <Button
+                          key={a.status}
+                          label={a.label}
+                          variant={a.variant}
+                          loading={busyId === row.id}
+                          style={styles.action}
+                          onPress={() =>
+                            a.status === 'unable_to_drop_off'
+                              ? confirmUnableToDrop(row)
+                              : setStatus(row, a.status)
+                          }
+                        />
+                      ))}
+                    </Row>
                   ) : null}
                 </Card>
               );
