@@ -170,6 +170,15 @@ export interface StudentTripStatus {
   updated_at: string;
 }
 
+/** The van's actual arrival and departure at one stop of one day's trip. */
+export interface TripStopProgress {
+  id: string;
+  trip_id: string;
+  stop_id: string;
+  arrived_at: string | null;
+  departed_at: string | null;
+}
+
 export interface ChangeRequest {
   id: string;
   student_id: string;

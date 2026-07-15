@@ -11,7 +11,12 @@ import {
   ROUTE_TYPE_LABEL,
   isFinal,
 } from '../../../src/lib/types';
-import type { IncidentKind, Profile, RiderStatus, StudentTripStatus } from '../../../src/lib/types';
+import type {
+  IncidentKind,
+  Profile,
+  RiderStatus,
+  StudentTripStatus,
+} from '../../../src/lib/types';
 import { GpsDisabled } from '../../../src/components/Disabled';
 import {
   Badge,
@@ -57,10 +62,11 @@ export default function DriverTrip() {
   const me = session?.user.id;
 
   const ref = useReference();
-  const { rows, trips, loading, reload } = useTripStatuses();
+  const { rows, trips, progress, loading, reload } = useTripStatuses();
 
   const [students, setStudents] = useState<Profile[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [busyStop, setBusyStop] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [incidentNote, setIncidentNote] = useState('');
 
@@ -85,6 +91,55 @@ export default function DriverTrip() {
 
   const nameOf = (studentId: string) =>
     students.find((s) => s.id === studentId)?.full_name ?? 'Student';
+
+  const progressOf = (stopId: string) =>
+    progress.find((p) => p.trip_id === id && p.stop_id === stopId);
+  const fmtTime = (t: string) =>
+    new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+  async function markArrived(stopId: string) {
+    setBusyStop(stopId);
+    setError('');
+    const { error: e } = await supabase
+      .from('trip_stop_progress')
+      .upsert(
+        { trip_id: id, stop_id: stopId, arrived_at: new Date().toISOString() },
+        { onConflict: 'trip_id,stop_id' },
+      );
+    setBusyStop(null);
+    if (e) return setError(e.message);
+    await reload();
+  }
+
+  async function markDeparted(stopId: string) {
+    setBusyStop(stopId);
+    setError('');
+    // Leaving a stop puts everyone who boarded THERE in transit. This is what the
+    // single "Vehicle departed" button used to do for the whole trip at once; now
+    // it happens stop by stop, so a parent sees "in transit" the moment the van
+    // actually pulls away from their child's hub.
+    const boardedHere = riders.filter(
+      (r) => r.pickup_stop_id === stopId && r.status === 'boarded',
+    );
+    const { error: e } = await supabase
+      .from('trip_stop_progress')
+      .upsert(
+        { trip_id: id, stop_id: stopId, departed_at: new Date().toISOString() },
+        { onConflict: 'trip_id,stop_id' },
+      );
+    if (e) {
+      setBusyStop(null);
+      return setError(e.message);
+    }
+    if (boardedHere.length) {
+      await supabase
+        .from('student_trip_status')
+        .update({ status: 'in_transit', updated_by: me })
+        .in('id', boardedHere.map((r) => r.id));
+    }
+    setBusyStop(null);
+    await reload();
+  }
 
   async function setStatus(row: StudentTripStatus, status: RiderStatus, note?: string) {
     setError('');
@@ -130,20 +185,6 @@ export default function DriverTrip() {
       .update({ status: 'active', started_at: new Date().toISOString() })
       .eq('id', trip.id);
     if (e) setError(e.message);
-    await reload();
-  }
-
-  /** Blueprint: In Transit is set when the vehicle departs. */
-  async function departed() {
-    const boarded = riders.filter((r) => r.status === 'boarded');
-    if (!boarded.length) {
-      Alert.alert('Nobody is on board', 'Confirm at least one student boarded first.');
-      return;
-    }
-    await supabase
-      .from('student_trip_status')
-      .update({ status: 'in_transit', updated_by: me })
-      .in('id', boarded.map((r) => r.id));
     await reload();
   }
 
@@ -221,11 +262,10 @@ export default function DriverTrip() {
           <Button label="Start trip" onPress={startTrip} />
         ) : trip.status === 'active' ? (
           <>
-            <Button label="Vehicle departed" variant="secondary" onPress={departed} />
             <Button label="End trip" variant="danger" onPress={endTrip} />
             <Text style={styles.fine}>
-              You cannot end the trip until every student has an outcome. That is the point — it is
-              how nobody gets left unaccounted for.
+              Work down the stops: arrive, board or drop off, then depart — the next stop unlocks
+              when you leave this one. You cannot end the trip until every student has an outcome.
             </Text>
           </>
         ) : (
@@ -247,7 +287,7 @@ export default function DriverTrip() {
       <ErrorText>{error}</ErrorText>
 
       {/* Stop roster (blueprint §5.1), grouped by the hub each student uses. */}
-      {stops.map((stop) => {
+      {stops.map((stop, i) => {
         const atStop = riders.filter(
           (r) => r.pickup_stop_id === stop.id || r.dropoff_stop_id === stop.id,
         );
@@ -255,12 +295,73 @@ export default function DriverTrip() {
 
         const allAway = atStop.every((r) => ['absent', 'parent_pickup'].includes(r.status));
 
+        // Where the school sits on the route decides which action it can have.
+        // Afternoon runs school -> hub, so the school is the ORIGIN: the van
+        // starts there, it never "arrives". Morning/club run hub -> school, so
+        // the school is the DESTINATION: the van ends there, it never departs.
+        const isSchool = Boolean(stop.school_id);
+        const isOrigin = isSchool && route?.type === 'afternoon';
+        const isDestination = isSchool && route?.type !== 'afternoon';
+
+        const prog = progressOf(stop.id);
+        const arrived = Boolean(prog?.arrived_at) || isOrigin;
+        const departed = Boolean(prog?.departed_at);
+        // A stop is reachable once the one before it has been left behind. This
+        // is what makes the flow one-way: depart here, then the next stop opens.
+        const reachable = i === 0 || Boolean(progressOf(stops[i - 1].id)?.departed_at);
+        const active = trip.status === 'active';
+
+        const canArrive = active && !isOrigin && !prog?.arrived_at && reachable && !departed;
+        // An all-away stop can be left without arriving — there is nobody to see.
+        const canDepart = active && !isDestination && !departed && reachable && (arrived || allAway);
+
         return (
           <View key={stop.id} style={styles.stopBlock}>
             <SectionLabel>
               {stop.seq}. {ref.stopName(stop.id)}
               {stop.planned_arrival ? ` · ${stop.planned_arrival.slice(0, 5)}` : ''}
             </SectionLabel>
+
+            {/* The van's progress through this stop. */}
+            {active || prog ? (
+              <Card style={styles.progressCard}>
+                <Text style={styles.fine}>
+                  {prog?.arrived_at
+                    ? `Arrived ${fmtTime(prog.arrived_at)}`
+                    : isOrigin
+                      ? 'Start of the route'
+                      : reachable
+                        ? 'Van is due here next'
+                        : 'Not reached yet'}
+                  {prog?.departed_at
+                    ? ` · Departed ${fmtTime(prog.departed_at)}`
+                    : isDestination
+                      ? ' · final stop'
+                      : ''}
+                </Text>
+                {canArrive || canDepart ? (
+                  <Row style={styles.wrap}>
+                    {canArrive ? (
+                      <Button
+                        label="Arrived at this stop"
+                        variant="secondary"
+                        loading={busyStop === stop.id}
+                        style={styles.action}
+                        onPress={() => markArrived(stop.id)}
+                      />
+                    ) : null}
+                    {canDepart ? (
+                      <Button
+                        label={allAway && !arrived ? 'Skip this stop' : 'Departed this stop'}
+                        loading={busyStop === stop.id}
+                        style={styles.action}
+                        onPress={() => markDeparted(stop.id)}
+                      />
+                    ) : null}
+                  </Row>
+                ) : null}
+              </Card>
+            ) : null}
 
             {/* Blueprint §5.1: see absentees and skip those stops. */}
             {allAway ? (
@@ -388,6 +489,7 @@ const styles = StyleSheet.create({
   done: { fontSize: 14, color: theme.success },
   resolved: { opacity: 0.65 },
   stopBlock: { gap: 12 },
+  progressCard: { gap: 10, backgroundColor: theme.surfaceAlt },
   skip: { backgroundColor: theme.surfaceAlt },
   skipText: { fontSize: 13, color: theme.muted },
   urgent: { borderColor: theme.danger, backgroundColor: '#2A1D1D' },

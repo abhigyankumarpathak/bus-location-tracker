@@ -9,6 +9,7 @@ import type {
   RouteTemplate,
   School,
   StudentTripStatus,
+  TripStopProgress,
   Vehicle,
 } from './types';
 
@@ -129,6 +130,7 @@ export function useReference() {
 export function useTripStatuses(date: string = today()) {
   const [rows, setRows] = useState<StudentTripStatus[]>([]);
   const [trips, setTrips] = useState<DailyTrip[]>([]);
+  const [progress, setProgress] = useState<TripStopProgress[]>([]);
   const [drivers, setDrivers] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -147,17 +149,21 @@ export function useTripStatuses(date: string = today()) {
 
     if (!dayTrips.length) {
       setRows([]);
+      setProgress([]);
       setDrivers([]);
       setLoading(false);
       return;
     }
 
-    const { data: s } = await supabase
-      .from('student_trip_status')
-      .select('*')
-      .in('trip_id', dayTrips.map((x) => x.id));
+    const tripIds = dayTrips.map((x) => x.id);
+
+    const [{ data: s }, { data: pr }] = await Promise.all([
+      supabase.from('student_trip_status').select('*').in('trip_id', tripIds),
+      supabase.from('trip_stop_progress').select('*').in('trip_id', tripIds),
+    ]);
 
     setRows((s as StudentTripStatus[]) ?? []);
+    setProgress((pr as TripStopProgress[]) ?? []);
 
     // RLS lets a rider (and their guardian) read the profile of the driver on a
     // trip they are actually on today, and nobody else's.
@@ -189,6 +195,9 @@ export function useTripStatuses(date: string = today()) {
         reload(),
       )
       .on('postgres_changes', { event: '*', schema: 'public', table: 'daily_trips' }, () => reload())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'trip_stop_progress' }, () =>
+        reload(),
+      )
       .subscribe();
 
     return () => {
@@ -199,10 +208,13 @@ export function useTripStatuses(date: string = today()) {
   return {
     rows,
     trips,
+    progress,
     drivers,
     loading,
     reload,
     driverOf: (id: string | null | undefined) => drivers.find((d) => d.id === id) ?? null,
+    stopProgressOf: (tripId: string | null | undefined, stopId: string | null | undefined) =>
+      progress.find((p) => p.trip_id === tripId && p.stop_id === stopId) ?? null,
   };
 }
 

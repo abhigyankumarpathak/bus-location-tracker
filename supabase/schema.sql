@@ -296,6 +296,22 @@ create table student_trip_status (
 create index sts_trip_idx on student_trip_status (trip_id);
 create index sts_student_idx on student_trip_status (student_id);
 
+-- The van's actual progress through a trip, stop by stop. One row per stop the
+-- driver reaches, holding when they got there and when they pulled away. This is
+-- per-day and per-stop, so it cannot live on route_stops (the shared template)
+-- or daily_trips (one row per trip). The driver writes it; staff, and the
+-- riders/parents on the trip, read it -- which is how a parent learns "the van
+-- has arrived at your hub".
+create table trip_stop_progress (
+  id          uuid primary key default gen_random_uuid(),
+  trip_id     uuid not null references daily_trips on delete cascade,
+  stop_id     uuid not null references route_stops on delete cascade,
+  arrived_at  timestamptz,
+  departed_at timestamptz,
+  unique (trip_id, stop_id)
+);
+create index trip_stop_progress_trip_idx on trip_stop_progress (trip_id);
+
 -- Blueprint §4.2 / §6.3. A parent (or student, for club) asks for a change.
 -- Before the cutoff it applies immediately; after it, a coordinator decides.
 create table change_requests (
@@ -1030,6 +1046,10 @@ begin
          delay_reason = null
    where id = target_trip;
 
+  -- Wipe the van's stop-by-stop progress too, or a re-run would show last run's
+  -- arrival and departure times against a fresh trip.
+  delete from trip_stop_progress where trip_id = target_trip;
+
   insert into audit_logs (entity_type, entity_id, action, old_value, new_value, reason, changed_by)
   values ('daily_trips', target_trip, 'rerun', before,
           jsonb_build_object('status', 'scheduled'), trimmed, auth.uid());
@@ -1175,6 +1195,7 @@ alter table route_stops         enable row level security;
 alter table route_assignments   enable row level security;
 alter table daily_trips         enable row level security;
 alter table student_trip_status enable row level security;
+alter table trip_stop_progress  enable row level security;
 alter table change_requests     enable row level security;
 alter table incidents           enable row level security;
 alter table announcements       enable row level security;
@@ -1327,6 +1348,19 @@ create policy "drivers record outcomes" on student_trip_status for update
 create policy "staff override status" on student_trip_status for all
   using (is_staff()) with check (is_staff());
 
+-- trip_stop_progress: the driver of the trip writes it; staff read everything;
+-- a rider (or their guardian) reads the progress of a trip their child is on.
+create policy "drivers manage stop progress" on trip_stop_progress for all
+  using (drives_trip(trip_id)) with check (drives_trip(trip_id));
+create policy "staff read stop progress" on trip_stop_progress for select using (is_staff());
+create policy "riders read stop progress" on trip_stop_progress for select using (
+  is_active() and exists (
+    select 1 from student_trip_status sts
+    where sts.trip_id = trip_stop_progress.trip_id
+      and (sts.student_id = auth.uid() or is_guardian_of(sts.student_id))
+  )
+);
+
 -- change_requests
 create policy "read own changes" on change_requests for select using (
   (is_active() and (student_id = auth.uid() or is_guardian_of(student_id)))
@@ -1410,6 +1444,7 @@ create policy "staff read removals" on account_removals for select using (is_sta
 -- ---------------------------------------------------------------------------
 
 alter publication supabase_realtime add table student_trip_status;
+alter publication supabase_realtime add table trip_stop_progress;
 alter publication supabase_realtime add table daily_trips;
 alter publication supabase_realtime add table notifications;
 alter publication supabase_realtime add table change_requests;
