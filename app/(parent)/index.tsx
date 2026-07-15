@@ -65,9 +65,10 @@ export default function ParentChildren() {
         const child = children.find((c) => c.id === row.student_id);
         if (!child) return null;
 
-        const stop = ref.stops.find((s) => s.id === row.pickup_stop_id);
+        const hubStopId = ref.hubStopId(row.pickup_stop_id, row.dropoff_stop_id);
+        const stop = ref.stops.find((s) => s.id === hubStopId);
         const when = stop?.planned_arrival ?? stop?.planned_departure;
-        const hub = ref.stopName(row.pickup_stop_id);
+        const hub = ref.stopName(hubStopId);
         if (!when || !hub) return null;
 
         return {
@@ -120,7 +121,9 @@ export default function ParentChildren() {
                           {route ? ROUTE_TYPE_LABEL[route.type] : 'Trip'}
                         </Text>
                         <Text style={styles.fine}>
-                          {ref.stopName(row.pickup_stop_id) ?? 'No hub'}
+                          {ref.stopName(
+                            ref.hubStopId(row.pickup_stop_id, row.dropoff_stop_id),
+                          ) ?? 'No hub'}
                           {driver ? ` · ${driver.full_name.split(' ')[0]}` : ''}
                           {trip?.vehicle_id
                             ? ` · ${ref.vehicleOf(trip.vehicle_id)?.label ?? ''}`
@@ -137,9 +140,10 @@ export default function ParentChildren() {
                     <Text style={styles.next}>{nextEvent(row.status)}</Text>
 
                     {(() => {
-                      const stop = ref.stops.find((s) => s.id === row.pickup_stop_id);
+                      const hubStopId = ref.hubStopId(row.pickup_stop_id, row.dropoff_stop_id);
+                      const stop = ref.stops.find((s) => s.id === hubStopId);
                       const due = stop?.planned_arrival ?? stop?.planned_departure;
-                      const hub = ref.stopName(row.pickup_stop_id);
+                      const hub = ref.stopName(hubStopId);
                       if (!due || !hub) {
                         return (
                           <Text style={styles.noTime}>

@@ -103,6 +103,15 @@ export function useReference() {
     stopCoords,
     stopsFor: (routeId: string | null | undefined) =>
       stops.filter((s) => s.route_id === routeId).sort((a, b) => a.seq - b.seq),
+    // The student's own stop -- the HUB, the one a parent cares about. A student
+    // rides between their hub and the school; which of pickup/drop-off is the
+    // hub flips with the route direction (morning boards at the hub, afternoon
+    // gets off at it). A route_stop is a hub XOR the school, so the hub is
+    // whichever of the two is not the school.
+    hubStopId: (pickupStopId: string | null, dropoffStopId: string | null) => {
+      const pickup = stops.find((s) => s.id === pickupStopId);
+      return pickup?.hub_id ? pickupStopId : dropoffStopId;
+    },
     routeOf: (routeId: string | null | undefined) => routes.find((r) => r.id === routeId) ?? null,
     vehicleOf: (id: string | null | undefined) => vehicles.find((v) => v.id === id) ?? null,
     hubOf: (id: string | null | undefined) => hubs.find((h) => h.id === id) ?? null,
