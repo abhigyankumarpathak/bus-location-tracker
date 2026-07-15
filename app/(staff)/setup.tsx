@@ -242,6 +242,12 @@ export default function StaffSetup() {
     if (!editingStop) return;
     setError('');
 
+    // The school terminal carries only one time; force the other to null so a
+    // value typed before the stop became a terminal cannot linger.
+    const route = ref.routeOf(editingStop.route_id);
+    const noArrival = Boolean(editingStop.school_id) && route?.type === 'afternoon';
+    const noDeparture = Boolean(editingStop.school_id) && route?.type !== 'afternoon';
+
     // Postgres `time` accepts HH:MM. Empty means "no planned time".
     const clean = (v: string) => (/^\d{1,2}:\d{2}$/.test(v.trim()) ? v.trim() : null);
     if (stopArrive.trim() && !clean(stopArrive)) return setError('Arrival must look like 07:05.');
@@ -249,7 +255,10 @@ export default function StaffSetup() {
 
     const { error: e } = await supabase
       .from('route_stops')
-      .update({ planned_arrival: clean(stopArrive), planned_departure: clean(stopDepart) })
+      .update({
+        planned_arrival: noArrival ? null : clean(stopArrive),
+        planned_departure: noDeparture ? null : clean(stopDepart),
+      })
       .eq('id', editingStop.id);
 
     if (e) return setError(staffError(e));
@@ -640,6 +649,12 @@ export default function StaffSetup() {
                           const isSchool = Boolean(stop.school_id);
                           const editing = editingStop?.id === stop.id;
 
+                          // The school is a terminal, so only one of its times is
+                          // real: an afternoon run STARTS there (departure only),
+                          // a morning/club run ENDS there (arrival only).
+                          const noArrival = isSchool && route.type === 'afternoon';
+                          const noDeparture = isSchool && route.type !== 'afternoon';
+
                           return (
                             <View key={stop.id} style={styles.stopRow}>
                               <Row style={styles.between}>
@@ -649,12 +664,16 @@ export default function StaffSetup() {
                                     {isSchool ? ' 🏫' : ''}
                                   </Text>
                                   <Text style={styles.fine}>
-                                    {stop.planned_arrival
-                                      ? `arrive ${stop.planned_arrival.slice(0, 5)}`
-                                      : 'no arrival time'}
-                                    {stop.planned_departure
-                                      ? ` · depart ${stop.planned_departure.slice(0, 5)}`
-                                      : ''}
+                                    {noArrival
+                                      ? 'first stop — departure only'
+                                      : stop.planned_arrival
+                                        ? `arrive ${stop.planned_arrival.slice(0, 5)}`
+                                        : 'no arrival time'}
+                                    {noDeparture
+                                      ? ' · final stop — arrival only'
+                                      : stop.planned_departure
+                                        ? ` · depart ${stop.planned_departure.slice(0, 5)}`
+                                        : ''}
                                   </Text>
                                 </View>
                               </Row>
@@ -662,22 +681,26 @@ export default function StaffSetup() {
                               {editing ? (
                                 <>
                                   <Row>
-                                    <View style={styles.grow}>
-                                      <Field
-                                        label="Arrive"
-                                        value={stopArrive}
-                                        onChangeText={setStopArrive}
-                                        placeholder="07:05"
-                                      />
-                                    </View>
-                                    <View style={styles.grow}>
-                                      <Field
-                                        label="Depart"
-                                        value={stopDepart}
-                                        onChangeText={setStopDepart}
-                                        placeholder="07:10"
-                                      />
-                                    </View>
+                                    {!noArrival ? (
+                                      <View style={styles.grow}>
+                                        <Field
+                                          label="Arrive"
+                                          value={stopArrive}
+                                          onChangeText={setStopArrive}
+                                          placeholder="07:05"
+                                        />
+                                      </View>
+                                    ) : null}
+                                    {!noDeparture ? (
+                                      <View style={styles.grow}>
+                                        <Field
+                                          label="Depart"
+                                          value={stopDepart}
+                                          onChangeText={setStopDepart}
+                                          placeholder="07:10"
+                                        />
+                                      </View>
+                                    ) : null}
                                   </Row>
                                   <Row>
                                     <Button

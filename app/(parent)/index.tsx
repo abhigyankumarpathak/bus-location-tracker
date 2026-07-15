@@ -47,7 +47,7 @@ export default function ParentChildren() {
   const { gpsEnabled } = useFeatures();
   const { children, loading: childrenLoading } = useMyChildren();
   const ref = useReference();
-  const { rows, trips, loading, reload, driverOf } = useTripStatuses();
+  const { rows, trips, loading, reload, driverOf, stopProgressOf } = useTripStatuses();
 
   useEffect(() => {
     ensureTodaysTrips().then(reload);
@@ -65,9 +65,10 @@ export default function ParentChildren() {
         const child = children.find((c) => c.id === row.student_id);
         if (!child) return null;
 
-        const stop = ref.stops.find((s) => s.id === row.pickup_stop_id);
+        const hubStopId = ref.hubStopId(row.pickup_stop_id, row.dropoff_stop_id);
+        const stop = ref.stops.find((s) => s.id === hubStopId);
         const when = stop?.planned_arrival ?? stop?.planned_departure;
-        const hub = ref.stopName(row.pickup_stop_id);
+        const hub = ref.stopName(hubStopId);
         if (!when || !hub) return null;
 
         return {
@@ -120,7 +121,9 @@ export default function ParentChildren() {
                           {route ? ROUTE_TYPE_LABEL[route.type] : 'Trip'}
                         </Text>
                         <Text style={styles.fine}>
-                          {ref.stopName(row.pickup_stop_id) ?? 'No hub'}
+                          {ref.stopName(
+                            ref.hubStopId(row.pickup_stop_id, row.dropoff_stop_id),
+                          ) ?? 'No hub'}
                           {driver ? ` · ${driver.full_name.split(' ')[0]}` : ''}
                           {trip?.vehicle_id
                             ? ` · ${ref.vehicleOf(trip.vehicle_id)?.label ?? ''}`
@@ -137,9 +140,25 @@ export default function ParentChildren() {
                     <Text style={styles.next}>{nextEvent(row.status)}</Text>
 
                     {(() => {
-                      const stop = ref.stops.find((s) => s.id === row.pickup_stop_id);
+                      const hubStopId = ref.hubStopId(row.pickup_stop_id, row.dropoff_stop_id);
+                      const hub = ref.stopName(hubStopId);
+                      // Once the driver marks the van as having reached the hub,
+                      // say so — the concrete "it is here" a parent is waiting for.
+                      const atHub = stopProgressOf(row.trip_id, hubStopId);
+                      if (atHub?.arrived_at) {
+                        return (
+                          <Text style={styles.arrived}>
+                            🚌 Van arrived at {hub ?? 'the hub'} at{' '}
+                            {new Date(atHub.arrived_at).toLocaleTimeString([], {
+                              hour: 'numeric',
+                              minute: '2-digit',
+                            })}
+                            .
+                          </Text>
+                        );
+                      }
+                      const stop = ref.stops.find((s) => s.id === hubStopId);
                       const due = stop?.planned_arrival ?? stop?.planned_departure;
-                      const hub = ref.stopName(row.pickup_stop_id);
                       if (!due || !hub) {
                         return (
                           <Text style={styles.noTime}>
@@ -252,6 +271,7 @@ const styles = StyleSheet.create({
   routeName: { fontSize: 16, fontWeight: '700', color: theme.text },
   fine: { fontSize: 12, color: theme.faint, lineHeight: 17 },
   noTime: { fontSize: 12, color: theme.warn, lineHeight: 17 },
+  arrived: { fontSize: 13, color: theme.accent, fontWeight: '600', lineHeight: 18 },
   next: { fontSize: 13, color: theme.muted },
   note: { fontSize: 12, color: theme.warn },
   timeline: { flexDirection: 'row', gap: 4, paddingVertical: 4 },

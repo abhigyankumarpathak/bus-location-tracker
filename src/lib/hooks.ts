@@ -9,6 +9,7 @@ import type {
   RouteTemplate,
   School,
   StudentTripStatus,
+  TripStopProgress,
   Vehicle,
 } from './types';
 
@@ -103,6 +104,15 @@ export function useReference() {
     stopCoords,
     stopsFor: (routeId: string | null | undefined) =>
       stops.filter((s) => s.route_id === routeId).sort((a, b) => a.seq - b.seq),
+    // The student's own stop -- the HUB, the one a parent cares about. A student
+    // rides between their hub and the school; which of pickup/drop-off is the
+    // hub flips with the route direction (morning boards at the hub, afternoon
+    // gets off at it). A route_stop is a hub XOR the school, so the hub is
+    // whichever of the two is not the school.
+    hubStopId: (pickupStopId: string | null, dropoffStopId: string | null) => {
+      const pickup = stops.find((s) => s.id === pickupStopId);
+      return pickup?.hub_id ? pickupStopId : dropoffStopId;
+    },
     routeOf: (routeId: string | null | undefined) => routes.find((r) => r.id === routeId) ?? null,
     vehicleOf: (id: string | null | undefined) => vehicles.find((v) => v.id === id) ?? null,
     hubOf: (id: string | null | undefined) => hubs.find((h) => h.id === id) ?? null,
@@ -120,6 +130,7 @@ export function useReference() {
 export function useTripStatuses(date: string = today()) {
   const [rows, setRows] = useState<StudentTripStatus[]>([]);
   const [trips, setTrips] = useState<DailyTrip[]>([]);
+  const [progress, setProgress] = useState<TripStopProgress[]>([]);
   const [drivers, setDrivers] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -138,17 +149,21 @@ export function useTripStatuses(date: string = today()) {
 
     if (!dayTrips.length) {
       setRows([]);
+      setProgress([]);
       setDrivers([]);
       setLoading(false);
       return;
     }
 
-    const { data: s } = await supabase
-      .from('student_trip_status')
-      .select('*')
-      .in('trip_id', dayTrips.map((x) => x.id));
+    const tripIds = dayTrips.map((x) => x.id);
+
+    const [{ data: s }, { data: pr }] = await Promise.all([
+      supabase.from('student_trip_status').select('*').in('trip_id', tripIds),
+      supabase.from('trip_stop_progress').select('*').in('trip_id', tripIds),
+    ]);
 
     setRows((s as StudentTripStatus[]) ?? []);
+    setProgress((pr as TripStopProgress[]) ?? []);
 
     // RLS lets a rider (and their guardian) read the profile of the driver on a
     // trip they are actually on today, and nobody else's.
@@ -180,6 +195,9 @@ export function useTripStatuses(date: string = today()) {
         reload(),
       )
       .on('postgres_changes', { event: '*', schema: 'public', table: 'daily_trips' }, () => reload())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'trip_stop_progress' }, () =>
+        reload(),
+      )
       .subscribe();
 
     return () => {
@@ -190,10 +208,13 @@ export function useTripStatuses(date: string = today()) {
   return {
     rows,
     trips,
+    progress,
     drivers,
     loading,
     reload,
     driverOf: (id: string | null | undefined) => drivers.find((d) => d.id === id) ?? null,
+    stopProgressOf: (tripId: string | null | undefined, stopId: string | null | undefined) =>
+      progress.find((p) => p.trip_id === tripId && p.stop_id === stopId) ?? null,
   };
 }
 

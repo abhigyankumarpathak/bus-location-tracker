@@ -147,18 +147,26 @@ export default function StaffDashboard() {
 
   if (loading || ref.loading) return <Loading />;
 
+  // A cancelled trip is a deleted one — it stays in the table only to hold its
+  // (route, date) slot so ensure_daily_trips does not regenerate it. It is not a
+  // real trip any more, so it is off the board and out of every count below.
+  const boardTrips = trips.filter((t) => t.status !== 'cancelled');
+  const cancelledTrips = trips.filter((t) => t.status === 'cancelled');
+  const liveRows = rows.filter((r) => boardTrips.some((t) => t.id === r.trip_id));
+
   // Blueprint §5.2 summary cards.
-  const activeTrips = trips.filter((t) => t.status === 'active').length;
-  const waiting = rows.filter((r) => r.status === 'waiting').length;
-  const onboard = rows.filter((r) => ['boarded', 'in_transit'].includes(r.status)).length;
-  const unresolved = rows.filter(
+  const activeTrips = boardTrips.filter((t) => t.status === 'active').length;
+  const waiting = liveRows.filter((r) => r.status === 'waiting').length;
+  const onboard = liveRows.filter((r) => ['boarded', 'in_transit'].includes(r.status)).length;
+  const unresolved = liveRows.filter(
     (r) => !isFinal(r.status) && !['scheduled'].includes(r.status),
   ).length;
-  const urgent = rows.filter((r) => r.status === 'unable_to_drop_off').length;
+  const urgent = liveRows.filter((r) => r.status === 'unable_to_drop_off').length;
 
   // Daily closeout: every trip complete and every student with a final status.
-  const allTripsDone = trips.length > 0 && trips.every((t) => ['completed', 'cancelled'].includes(t.status));
-  const allStudentsDone = rows.every((r) => isFinal(r.status));
+  const allTripsDone =
+    boardTrips.length > 0 && boardTrips.every((t) => t.status === 'completed');
+  const allStudentsDone = liveRows.every((r) => isFinal(r.status));
 
   return (
     <Screen>
@@ -172,7 +180,7 @@ export default function StaffDashboard() {
       <Row style={styles.cards}>
         <Stat label="Unresolved" value={unresolved} tone={unresolved ? theme.warn : theme.muted} />
         <Stat label="Urgent" value={urgent} tone={urgent ? theme.danger : theme.muted} />
-        <Stat label="Trips today" value={trips.length} tone={theme.muted} />
+        <Stat label="Trips today" value={boardTrips.length} tone={theme.muted} />
       </Row>
 
       {urgent > 0 ? (
@@ -189,13 +197,13 @@ export default function StaffDashboard() {
 
       <SectionLabel>Trip board</SectionLabel>
 
-      {trips.length === 0 ? (
+      {boardTrips.length === 0 ? (
         <Empty>
           No trips today. Either no route runs on this weekday, or no route templates exist yet.
         </Empty>
       ) : null}
 
-      {trips.map((trip) => {
+      {boardTrips.map((trip) => {
         const route = ref.routeOf(trip.route_id);
         const vehicle = ref.vehicleOf(trip.vehicle_id);
         const riders = rows.filter((r) => r.trip_id === trip.id);
@@ -341,6 +349,70 @@ export default function StaffDashboard() {
         );
       })}
 
+      {/* Deleted (cancelled) trips. Kept only so they do not regenerate; shown
+          here so a delete during testing is reversible — Re-run brings one back
+          onto the board. Admin only, since only an admin can act on them. */}
+      {isAdmin && cancelledTrips.length > 0 ? (
+        <>
+          <SectionLabel>Deleted trips</SectionLabel>
+          {cancelledTrips.map((trip) => {
+            const route = ref.routeOf(trip.route_id);
+            return (
+              <Card key={trip.id} style={styles.cancelledCard}>
+                <Row style={styles.between}>
+                  <View style={styles.grow}>
+                    <Text style={styles.name}>
+                      {route?.name} · {route ? ROUTE_TYPE_LABEL[route.type] : ''}
+                    </Text>
+                    <Text style={styles.fine}>Deleted — off the board and will not regenerate.</Text>
+                  </View>
+                  <Badge label="Deleted" tone="neutral" />
+                </Row>
+                {action?.tripId === trip.id && action.kind === 'rerun' ? (
+                  <View style={styles.adminBox}>
+                    <Text style={styles.fine}>
+                      Re-run brings this trip back to the board as Scheduled. Say why — it is logged.
+                    </Text>
+                    <Field
+                      label="Reason"
+                      value={reason}
+                      onChangeText={setReason}
+                      placeholder="Bringing it back to test again"
+                    />
+                    <Row style={styles.wrap}>
+                      <Button
+                        label="Confirm re-run"
+                        loading={actionBusy}
+                        disabled={!reason.trim()}
+                        onPress={runTripAction}
+                        style={styles.grow}
+                      />
+                      <Button
+                        label="Cancel"
+                        variant="ghost"
+                        onPress={() => {
+                          setAction(null);
+                          setReason('');
+                        }}
+                      />
+                    </Row>
+                  </View>
+                ) : (
+                  <Button
+                    label="Re-run"
+                    variant="secondary"
+                    onPress={() => {
+                      setReason('');
+                      setAction({ tripId: trip.id, kind: 'rerun' });
+                    }}
+                  />
+                )}
+              </Card>
+            );
+          })}
+        </>
+      ) : null}
+
       <SectionLabel>Daily closeout</SectionLabel>
       <Card>
         <Row style={styles.between}>
@@ -410,6 +482,7 @@ const styles = StyleSheet.create({
   warn: { fontSize: 12, color: theme.warn, lineHeight: 17 },
   riders: { flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
   adminBox: { gap: 8, borderTopWidth: 1, borderTopColor: theme.border, paddingTop: 12 },
+  cancelledCard: { opacity: 0.7 },
   urgent: { borderColor: theme.danger, backgroundColor: '#2A1D1D' },
   urgentTitle: { fontSize: 15, fontWeight: '700', color: theme.danger },
   urgentBody: { fontSize: 13, color: theme.text, lineHeight: 19 },
