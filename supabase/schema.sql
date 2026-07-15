@@ -1037,9 +1037,16 @@ end;
 $$;
 grant execute on function rerun_trip(uuid, text) to authenticated;
 
--- Remove a trip entirely. student_trip_status rows cascade with it. The audit
--- row is written BEFORE the delete, capturing what was there, because after the
--- delete there is nothing left to point at.
+-- Remove a trip from the board.
+--
+-- This CANCELS rather than hard-deletes, and the difference is the whole point.
+-- ensure_daily_trips() rebuilds today's trips from every active route template
+-- on every staff screen focus, inserting `on conflict (route_id, date) do
+-- nothing`. A real DELETE frees that (route, date) slot, so the very next screen
+-- focus recreated the trip -- it "came back". A cancelled row still occupies the
+-- slot, so the conflict clause skips it and it stays gone. The board hides
+-- cancelled trips, so to anyone using the app it is deleted; the row survives
+-- only to hold the slot (and as the audit trail). Re-run brings it back.
 create or replace function delete_trip(target_trip uuid, reason text)
 returns void
 language plpgsql security definer set search_path = public as $$
@@ -1059,10 +1066,11 @@ begin
     raise exception 'That trip no longer exists.';
   end if;
 
-  insert into audit_logs (entity_type, entity_id, action, old_value, new_value, reason, changed_by)
-  values ('daily_trips', target_trip, 'delete', before, null, trimmed, auth.uid());
+  update daily_trips set status = 'cancelled' where id = target_trip;
 
-  delete from daily_trips where id = target_trip;
+  insert into audit_logs (entity_type, entity_id, action, old_value, new_value, reason, changed_by)
+  values ('daily_trips', target_trip, 'delete',
+          before, jsonb_build_object('status', 'cancelled'), trimmed, auth.uid());
 end;
 $$;
 grant execute on function delete_trip(uuid, text) to authenticated;
