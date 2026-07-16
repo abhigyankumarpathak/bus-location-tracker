@@ -81,6 +81,9 @@ export default function StaffSetup() {
   /** Which route is expanded, and which panel inside it. */
   const [openRoute, setOpenRoute] = useState<string | null>(null);
   const [panel, setPanel] = useState<'stops' | 'crew' | 'riders' | null>(null);
+  const [confirmDeleteRoute, setConfirmDeleteRoute] = useState<string | null>(null);
+  const [confirmDeleteStop, setConfirmDeleteStop] = useState<string | null>(null);
+  const [confirmDeleteHub, setConfirmDeleteHub] = useState<string | null>(null);
 
   // New route
   const [newRouteName, setNewRouteName] = useState('');
@@ -176,24 +179,16 @@ export default function StaffSetup() {
     await refreshAll();
   }
 
-  function deleteRoute(route: RouteTemplate) {
-    Alert.alert(
-      `Delete ${route.name}?`,
-      'Its stops, student assignments, and past trips go with it. This cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            const { error: e } = await supabase.from('route_templates').delete().eq('id', route.id);
-            if (e) return setError(staffError(e));
-            setOpenRoute(null);
-            await refreshAll();
-          },
-        },
-      ],
-    );
+  // No Alert.alert here: React Native Web does not implement it, so on the web
+  // build the confirm dialog never appeared and this delete never ran — "nothing
+  // happens". The Danger panel now confirms inline instead.
+  async function deleteRoute(route: RouteTemplate) {
+    setError('');
+    const { error: e } = await supabase.from('route_templates').delete().eq('id', route.id);
+    if (e) return setError(staffError(e));
+    setConfirmDeleteRoute(null);
+    setOpenRoute(null);
+    await refreshAll();
   }
 
   /** Toggle a weekday on the route's operating schedule. */
@@ -266,29 +261,13 @@ export default function StaffSetup() {
     await refreshAll();
   }
 
-  function deleteStop(stop: RouteStop) {
-    const riders = assignments.filter(
-      (a) => a.pickup_stop_id === stop.id || a.dropoff_stop_id === stop.id,
-    ).length;
-
-    Alert.alert(
-      `Remove ${ref.stopName(stop.id)}?`,
-      riders > 0
-        ? `${riders} student${riders === 1 ? ' is' : 's are'} assigned to this stop. They will be left without one and you will have to re-assign them to the route.`
-        : 'This stop will be removed from the route.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove',
-          style: 'destructive',
-          onPress: async () => {
-            const { error: e } = await supabase.from('route_stops').delete().eq('id', stop.id);
-            if (e) return setError(staffError(e));
-            await refreshAll();
-          },
-        },
-      ],
-    );
+  // Same web caveat as deleteRoute: no Alert.alert. The stop row confirms inline.
+  async function deleteStop(stop: RouteStop) {
+    setError('');
+    const { error: e } = await supabase.from('route_stops').delete().eq('id', stop.id);
+    if (e) return setError(staffError(e));
+    setConfirmDeleteStop(null);
+    await refreshAll();
   }
 
   // -- riders ---------------------------------------------------------------
@@ -405,27 +384,13 @@ export default function StaffSetup() {
     setFoundLabel('');
   }
 
-  function deleteHub(hub: Hub) {
-    // A hub used by a route takes its stops with it (ON DELETE CASCADE), so say so.
-    const usedBy = ref.stops.filter((s) => s.hub_id === hub.id).length;
-    Alert.alert(
-      `Delete ${hub.name}?`,
-      usedBy > 0
-        ? `It is a stop on ${usedBy} route${usedBy === 1 ? '' : 's'}. Deleting it removes those stops too, and any student assigned there loses their stop.`
-        : 'This hub is not used by any route.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            const { error: e } = await supabase.from('hubs').delete().eq('id', hub.id);
-            if (e) return setError(staffError(e));
-            await refreshAll();
-          },
-        },
-      ],
-    );
+  // Same web caveat as deleteRoute/deleteStop: no Alert.alert. Confirmed inline.
+  async function deleteHub(hub: Hub) {
+    setError('');
+    const { error: e } = await supabase.from('hubs').delete().eq('id', hub.id);
+    if (e) return setError(staffError(e));
+    setConfirmDeleteHub(null);
+    await refreshAll();
   }
 
   // -- fleet ----------------------------------------------------------------
@@ -742,11 +707,26 @@ export default function StaffSetup() {
                                       setStopDepart(stop.planned_departure?.slice(0, 5) ?? '');
                                     }}
                                   />
-                                  <Button
-                                    label="Remove"
-                                    variant="danger"
-                                    onPress={() => deleteStop(stop)}
-                                  />
+                                  {confirmDeleteStop === stop.id ? (
+                                    <>
+                                      <Button
+                                        label="Confirm remove"
+                                        variant="danger"
+                                        onPress={() => deleteStop(stop)}
+                                      />
+                                      <Button
+                                        label="Cancel"
+                                        variant="ghost"
+                                        onPress={() => setConfirmDeleteStop(null)}
+                                      />
+                                    </>
+                                  ) : (
+                                    <Button
+                                      label="Remove"
+                                      variant="danger"
+                                      onPress={() => setConfirmDeleteStop(stop.id)}
+                                    />
+                                  )}
                                 </Row>
                               )}
                             </View>
@@ -860,11 +840,33 @@ export default function StaffSetup() {
                           variant="secondary"
                           onPress={() => patchRoute(route.id, { active: !route.active })}
                         />
-                        <Button
-                          label="Delete route"
-                          variant="danger"
-                          onPress={() => deleteRoute(route)}
-                        />
+                        {confirmDeleteRoute === route.id ? (
+                          <>
+                            <Text style={styles.warn}>
+                              Delete {route.name} for good? Its stops, student assignments, and trips
+                              go with it. This cannot be undone.
+                            </Text>
+                            <Row style={styles.wrap}>
+                              <Button
+                                label="Yes, delete route"
+                                variant="danger"
+                                style={styles.grow}
+                                onPress={() => deleteRoute(route)}
+                              />
+                              <Button
+                                label="Cancel"
+                                variant="ghost"
+                                onPress={() => setConfirmDeleteRoute(null)}
+                              />
+                            </Row>
+                          </>
+                        ) : (
+                          <Button
+                            label="Delete route"
+                            variant="danger"
+                            onPress={() => setConfirmDeleteRoute(route.id)}
+                          />
+                        )}
                       </View>
                     ) : null}
 
@@ -970,8 +972,37 @@ export default function StaffSetup() {
                       setHubLng(String(h.lng));
                     }}
                   />
-                  <Button label="Delete" variant="danger" onPress={() => deleteHub(h)} />
+                  {confirmDeleteHub === h.id ? null : (
+                    <Button
+                      label="Delete"
+                      variant="danger"
+                      onPress={() => setConfirmDeleteHub(h.id)}
+                    />
+                  )}
                 </Row>
+                {confirmDeleteHub === h.id ? (
+                  <>
+                    <Text style={styles.warn}>
+                      Delete {h.name}?{' '}
+                      {usedBy > 0
+                        ? `It is a stop on ${usedBy} route${usedBy === 1 ? '' : 's'} — those stops go too, and any student assigned there loses their stop.`
+                        : 'It is not used by any route.'}
+                    </Text>
+                    <Row style={styles.wrap}>
+                      <Button
+                        label="Yes, delete hub"
+                        variant="danger"
+                        style={styles.grow}
+                        onPress={() => deleteHub(h)}
+                      />
+                      <Button
+                        label="Cancel"
+                        variant="ghost"
+                        onPress={() => setConfirmDeleteHub(null)}
+                      />
+                    </Row>
+                  </>
+                ) : null}
               </Card>
             );
           })}

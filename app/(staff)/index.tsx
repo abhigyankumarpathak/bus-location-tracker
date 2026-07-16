@@ -297,7 +297,7 @@ export default function StaffDashboard() {
                   <Text style={styles.fine}>
                     {action.kind === 'rerun'
                       ? 'Re-run puts this trip back to Scheduled and clears every rider to their starting state. Say why — it is logged.'
-                      : 'Delete removes this trip and every rider record on it. Say why — it is logged.'}
+                      : "This removes only TODAY'S run of this trip. The route keeps making a new one each day — to delete the route for good, use Setup → the route → Driver & van → Delete route. Say why — it is logged."}
                   </Text>
                   <Field
                     label="Reason"
@@ -307,7 +307,7 @@ export default function StaffDashboard() {
                   />
                   <Row style={styles.wrap}>
                     <Button
-                      label={action.kind === 'rerun' ? 'Confirm re-run' : 'Confirm delete'}
+                      label={action.kind === 'rerun' ? 'Confirm re-run' : "Delete today's trip"}
                       variant={action.kind === 'rerun' ? 'primary' : 'danger'}
                       loading={actionBusy}
                       disabled={!reason.trim()}
@@ -335,7 +335,7 @@ export default function StaffDashboard() {
                     }}
                   />
                   <Button
-                    label="Delete"
+                    label="Delete (today only)"
                     variant="danger"
                     onPress={() => {
                       setReason('');
