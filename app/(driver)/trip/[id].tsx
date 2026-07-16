@@ -76,6 +76,19 @@ export default function DriverTrip() {
   const vehicle = ref.vehicleOf(trip?.vehicle_id);
   const stops = ref.stopsFor(trip?.route_id);
 
+  // The stops the driver actually works, in order — the ones with a rider to
+  // board or drop off. Stops with nobody on them are hidden from the roster, so
+  // they must NOT sit in the arrive/depart sequence either: gating a stop on a
+  // hidden previous stop being "departed" left it stuck on "Not reached yet"
+  // forever, with no Arrived button. The sequence runs over these, not all stops.
+  const activeStops = useMemo(
+    () =>
+      stops.filter((s) =>
+        riders.some((r) => r.pickup_stop_id === s.id || r.dropoff_stop_id === s.id),
+      ),
+    [stops, riders],
+  );
+
   const loadStudents = useCallback(async () => {
     if (!riders.length) return;
     const { data } = await supabase
@@ -287,7 +300,7 @@ export default function DriverTrip() {
       <ErrorText>{error}</ErrorText>
 
       {/* Stop roster (blueprint §5.1), grouped by the hub each student uses. */}
-      {stops.map((stop, i) => {
+      {stops.map((stop) => {
         const atStop = riders.filter(
           (r) => r.pickup_stop_id === stop.id || r.dropoff_stop_id === stop.id,
         );
@@ -306,9 +319,13 @@ export default function DriverTrip() {
         const prog = progressOf(stop.id);
         const arrived = Boolean(prog?.arrived_at) || isOrigin;
         const departed = Boolean(prog?.departed_at);
-        // A stop is reachable once the one before it has been left behind. This
-        // is what makes the flow one-way: depart here, then the next stop opens.
-        const reachable = i === 0 || Boolean(progressOf(stops[i - 1].id)?.departed_at);
+        // A stop is reachable once the PREVIOUS STAFFED stop has been left behind
+        // — walking the stops the driver actually sees, so an empty stop in the
+        // middle of the route never blocks the next one. This is what keeps the
+        // flow one-way: depart here, and the next stop with riders opens.
+        const activeIdx = activeStops.findIndex((s) => s.id === stop.id);
+        const prevActive = activeIdx > 0 ? activeStops[activeIdx - 1] : null;
+        const reachable = !prevActive || Boolean(progressOf(prevActive.id)?.departed_at);
         const active = trip.status === 'active';
 
         const canArrive = active && !isOrigin && !prog?.arrived_at && reachable && !departed;
