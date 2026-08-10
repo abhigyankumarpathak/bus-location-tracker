@@ -8,6 +8,7 @@ import {
   CHANGE_LABEL,
   RIDER_STATUS_LABEL,
   RIDER_STATUS_TONE,
+  formatDateSpan,
   isFinal,
 } from '../../src/lib/types';
 import type {
@@ -112,7 +113,7 @@ export default function StaffExceptions() {
       await supabase.from('notifications').insert({
         user_id: request.requested_by,
         title: approved ? 'Change approved' : 'Change not approved',
-        body: `${CHANGE_LABEL[request.kind]} for ${request.date} was ${approved ? 'approved' : 'rejected'}.`,
+        body: `${CHANGE_LABEL[request.kind]} for ${formatDateSpan(request.date, request.end_date)} was ${approved ? 'approved' : 'rejected'}.`,
         kind: 'approval',
       });
     }
@@ -289,7 +290,7 @@ export default function StaffExceptions() {
                     {nameOf(r.student_id)} · {CHANGE_LABEL[r.kind]}
                   </Text>
                   <Text style={styles.fine}>
-                    {r.date} · asked by {nameOf(r.requested_by)}
+                    {formatDateSpan(r.date, r.end_date)} · asked by {nameOf(r.requested_by)}
                     {r.reason ? ` · ${r.reason}` : ''}
                   </Text>
                 </View>

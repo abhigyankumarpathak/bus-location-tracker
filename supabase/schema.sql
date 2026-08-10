@@ -83,10 +83,13 @@ create table organization (
   name               text not null default 'School Transport',
   logo_url           text,
 
-  -- Blueprint §1.2 excludes continuous GPS from the first release, and §8
-  -- ("Do not continuously write vehicle GPS coordinates in the first release")
-  -- says to add it only after measuring cost and battery. The code is fully
-  -- written and tested; this flag is what keeps it out of the pilot.
+  -- Live vehicle tracking. Blueprint §1.2 and §8 keep it out of the first
+  -- release until cost and battery have been measured, so it ships OFF -- but
+  -- it is wired end to end, not stubbed: turning this on starts the driver
+  -- phone reporting on trip start and puts the van on the parent and student
+  -- maps. Position comes from the driver's phone today; the ingest-location
+  -- endpoint takes the same rows from a hardware tracker in the van when one is
+  -- fitted, and nothing above this line has to change when it is.
   gps_enabled        boolean not null default false,
 
   -- Blueprint §1.2 excludes payments/invoicing. Same story: built, switched off.
@@ -101,11 +104,11 @@ create table organization (
   checkin_window_min int not null default 60,
 
   -- How riders are marked on board.
-  --   'manual' — the driver taps each student. The MVP behaviour, and the only
-  --              one actually built.
-  --   'scan'   — students check themselves on by NFC or QR, so the driver keeps
-  --              their attention on driving. Reserved, not yet implemented; the
-  --              flag records the office's intent without changing behaviour.
+  --   'manual' — the driver taps each student by name. The default.
+  --   'scan'   — the student shows a QR code and the DRIVER scans it, on both
+  --              legs of the day. Faster, and it cannot board the wrong child.
+  --              Manual stays available underneath it: a flat phone has no QR,
+  --              and the van still has to leave.
   attendance_mode text not null default 'manual' check (attendance_mode in ('manual', 'scan'))
 );
 
@@ -286,6 +289,14 @@ create table daily_trips (
 );
 create index daily_trips_date_idx on daily_trips (date, status);
 
+-- A short, URL-safe, unguessable token. Defined here rather than with the other
+-- functions further down because student_trip_status DEFAULTs a column to it,
+-- and a default cannot reference a function that does not exist yet.
+create or replace function new_boarding_code() returns text
+language sql volatile as $$
+  select translate(encode(gen_random_bytes(12), 'base64'), '+/=', '-_');
+$$;
+
 create table student_trip_status (
   id            uuid primary key default gen_random_uuid(),
   trip_id       uuid not null references daily_trips on delete cascade,
@@ -297,6 +308,16 @@ create table student_trip_status (
   board_time    timestamptz,
   dropoff_time  timestamptz,
   note          text,
+
+  -- The token behind the student's QR code, when attendance_mode = 'scan'.
+  --
+  -- Per TRIP ROW, not per student, so it changes every day and for every leg. A
+  -- screenshot of yesterday's code is worthless, and a code scanned off a
+  -- classmate's phone identifies THAT classmate — the driver sees the wrong name
+  -- and stops. It never leaves the row: the student reads their own, the driver
+  -- reads the ones on their trip, and RLS says nobody else.
+  boarding_code text not null default new_boarding_code(),
+
   updated_by    uuid references profiles on delete set null,
   updated_at    timestamptz not null default now(),
   unique (trip_id, student_id)
@@ -326,6 +347,14 @@ create table change_requests (
   id               uuid primary key default gen_random_uuid(),
   student_id       uuid not null references profiles on delete cascade,
   date             date not null,
+
+  -- The last day the change covers, for a holiday or a long illness. Null means
+  -- a single day, which is what almost every request is -- so the column is
+  -- nullable rather than defaulted, and every query reads it as
+  -- `coalesce(end_date, date)`. Without this a month away was twenty separate
+  -- submissions, each one its own chance to typo a date or miss a cutoff.
+  end_date         date check (end_date is null or end_date >= date),
+
   kind             change_kind not null,
   reason           text,
   requested_by     uuid references profiles on delete set null,
@@ -336,6 +365,7 @@ create table change_requests (
   created_at       timestamptz not null default now()
 );
 create index change_requests_open_idx on change_requests (date, approval);
+create index change_requests_span_idx on change_requests (student_id, date, end_date);
 
 -- A parent's request to change WHERE their child rides from: the morning and
 -- afternoon hubs and the school. Unlike change_requests (a one-day exception),
@@ -794,10 +824,13 @@ begin
       ra.pickup_stop_id,
       ra.dropoff_stop_id
     from route_assignments ra
+    -- A request covers `date`..`end_date`, so a holiday booked once keeps
+    -- seating the student as Absent every day it spans. Null end_date is the
+    -- ordinary single-day case.
     left join lateral (
       select kind from change_requests c
       where c.student_id = ra.student_id
-        and c.date = target_date
+        and target_date between c.date and coalesce(c.end_date, c.date)
         and c.approval in ('auto_approved', 'approved')
         and c.kind in ('absent', 'parent_pickup')
       order by c.created_at desc limit 1
@@ -809,7 +842,7 @@ begin
         or exists (
           select 1 from change_requests c
           where c.student_id = ra.student_id
-            and c.date = target_date
+            and target_date between c.date and coalesce(c.end_date, c.date)
             and c.kind = 'club_attending'
             and c.approval in ('auto_approved', 'approved')
         )
@@ -832,14 +865,22 @@ language plpgsql security definer set search_path = public as $$
 declare
   org organization%rowtype;
   cutoff timestamptz;
+  span text;
 begin
   select * into org from organization where id = 1;
 
+  -- The cutoff is judged against the FIRST day the request covers. A holiday
+  -- booked in advance is always in time; only the day it starts on can be late.
   -- Morning cutoff governs absence; afternoon governs pickup and club changes.
   cutoff := (new.date + case
     when new.kind = 'absent' then org.morning_cutoff
     else org.afternoon_cutoff
   end)::timestamptz;
+
+  span := case
+    when new.end_date is null or new.end_date = new.date then new.date::text
+    else new.date::text || ' to ' || new.end_date::text
+  end;
 
   if now() <= cutoff then
     new.approval := 'auto_approved';
@@ -852,7 +893,7 @@ begin
     insert into notifications (user_id, title, body, kind)
     select p.id, 'Late change needs approval',
            (select full_name from profiles where id = new.student_id)
-             || ' — ' || new.kind::text || ' for ' || new.date::text || '.',
+             || ' — ' || new.kind::text || ' for ' || span || '.',
            'approval'
     from profiles p where p.role in ('coordinator', 'admin') and p.status = 'active';
   end if;
@@ -884,7 +925,10 @@ begin
         updated_at = now()
     from daily_trips t
     where sts.trip_id = t.id
-      and t.date = new.date
+      -- Every day the request spans that already has trips generated. Days
+      -- further out have no rows yet; ensure_daily_trips seats them as Absent
+      -- when it reaches them, reading the same range.
+      and t.date between new.date and coalesce(new.end_date, new.date)
       and sts.student_id = new.student_id
       -- Do not overwrite an outcome the driver already recorded.
       and sts.status in ('scheduled', 'waiting');
@@ -901,7 +945,7 @@ begin
     where sts.trip_id = t.id
       and t.route_id = rt.id
       and rt.type = 'club'
-      and t.date = new.date
+      and t.date between new.date and coalesce(new.end_date, new.date)
       and sts.student_id = new.student_id
       and sts.status = 'scheduled';
   end if;
@@ -1286,6 +1330,64 @@ $$;
 
 create trigger on_trip_completion before update on daily_trips
   for each row execute function guard_trip_completion();
+
+-- ---------------------------------------------------------------------------
+-- Scan boarding (attendance_mode = 'scan')
+--
+-- The student shows a QR code; the DRIVER scans it. Never the other way round.
+-- A code posted on the bus that students scan themselves would be a
+-- self-reported boarding, which is the one thing §2.1 forbids -- a child could
+-- scan from the pavement and be recorded as aboard a van they missed. Because
+-- the driver's phone does the scanning, the write is still a driver write, and
+-- the RLS policies below are unchanged: scanning is a faster way to press
+-- "Boarded", not a new authority to do it.
+--
+-- The driver's app already holds every rider on its own trip, so the normal
+-- scan resolves locally with no round trip. This function exists for the scan
+-- that DOESN'T resolve, which is the interesting one: a child at the right hub
+-- holding a valid code for a different van. Without it the driver sees "unknown
+-- code" and has no idea whether the app is broken or the child is on the wrong
+-- bus. Security definer, because answering that question means reading a row
+-- the caller deliberately cannot see.
+-- ---------------------------------------------------------------------------
+
+create or replace function identify_boarding_code(code text)
+-- `route_kind` rather than `route_type`: an OUT column sharing a name with the
+-- enum type is legal but becomes a plpgsql variable shadowing that type inside
+-- the body, which is a trap for whoever edits this next.
+returns table (
+  student_name text,
+  route_name   text,
+  route_kind   route_type,
+  driver_name  text,
+  trip_date    date,
+  is_today     boolean
+)
+language plpgsql security definer set search_path = public as $$
+begin
+  if not (is_staff() or my_role() = 'driver') then
+    raise exception 'Only a driver or the transport office can identify a boarding code.';
+  end if;
+
+  return query
+  select
+    coalesce(nullif(sp.full_name, ''), 'A student'),
+    rt.name,
+    rt.type,
+    coalesce(nullif(dp.full_name, ''), 'Not assigned'),
+    t.date,
+    t.date = current_date
+  from student_trip_status sts
+  join daily_trips t      on t.id = sts.trip_id
+  join route_templates rt on rt.id = t.route_id
+  join profiles sp        on sp.id = sts.student_id
+  left join profiles dp   on dp.id = t.driver_id
+  where sts.boarding_code = code
+  limit 1;
+end;
+$$;
+
+grant execute on function identify_boarding_code(text) to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Row Level Security

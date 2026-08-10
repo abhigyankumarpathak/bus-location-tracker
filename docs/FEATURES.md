@@ -6,6 +6,13 @@ A feature-by-feature account of the app as it stands, checked against the
 Written to be read by someone who has the blueprint in front of them and wants to
 know: *did they build what we asked for, and where did they not?*
 
+**Last updated 10 August 2026.** Two companion documents:
+[CHANGELOG](../CHANGELOG.md) for what changed when, and
+[REMEDIATION](REMEDIATION.md) for problems a flow review found that the blueprint
+never raised — including four where a child can go unaccounted for and nobody is
+alerted. This document answers "does it match the brief"; that one answers "is the
+brief enough".
+
 Three symbols throughout:
 
 | | |
@@ -41,7 +48,19 @@ have not been driven end-to-end with real accounts yet.
 work at a desk, which is what §7.3 was really asking for.
 
 **Two features are built but switched off**, because the blueprint excludes them:
-live GPS and payments.
+live GPS and payments. "Switched off" here means a flag, not a stub — as of
+10 August 2026 turning `gps_enabled` on puts the van on the parent and student
+maps with a live ETA, no new build required. It reports **only while a route is
+running**, and a stationary van reports on movement rather than continuously,
+which is what makes §8's cost-and-battery objection answerable rather than
+ignored.
+
+**QR boarding is built** (`attendance_mode = 'scan'`), on both legs of the day.
+The **driver scans the student**, never the reverse — a code the student scanned
+themselves would be a self-reported boarding, which §2.1 forbids. NFC is not
+built; QR does the same job on every phone with no extra hardware.
+
+**Absences cover a date range.** A month's holiday is one request, not twenty.
 
 **One thing the blueprint did not ask for:** a weekly archive and purge. Every
 Sunday each student's week is rolled into a single report and sent to their
@@ -102,7 +121,7 @@ are kept forever. An administrator turns it on with a switch. See
 | Payments, subscriptions, invoicing, payroll | ⛔ **Built but switched off** — see "Switched-off features" |
 | School information-system integration | ⛔ Not built |
 | Vehicle-to-vehicle transfers at hubs | ⛔ Not built. A student stays in one vehicle, per §3.1.5. |
-| Facial recognition, biometrics, continuous background location | ⛔ **GPS built but switched off**; no biometrics anywhere |
+| Facial recognition, biometrics, continuous background location | ⛔ No biometrics anywhere. GPS is **built and switched off** — and when switched on it is still not *continuous*: collection is scoped to a running route by four independent guards, and a stationary van goes quiet. See [Live GPS](#live-gps--gps_enabled--false). |
 | Advanced emergency dispatch / 911 | ⛔ Not built. Incidents go to the coordinator. |
 | Public App Store launch before pilot and privacy review | ⛔ Not submitted anywhere |
 
@@ -214,7 +233,7 @@ because it blocks the trip from closing.
 | Screen | Status |
 | --- | --- |
 | **My Children** — a card per child, current status, next expected event | ✅ |
-| **Child Trip** — the timeline | ⚠️ Built, but the blueprint's timeline includes **"Approaching"**, which this app cannot show — it is a GPS-derived state, and GPS is switched off. The other six steps are all there. |
+| **Child Trip** — the timeline | ⚠️ Built. The blueprint's timeline includes **"Approaching"**, which is still not a *timeline step* — but since 10 Aug, with GPS on, the card carries a live **"6 minutes away"** derived from the van's actual position, which is the information that step was for. The other six steps are all there. |
 | **Report a change** — absence, parent pickup, club attending/not attending | ✅ | The blueprint calls this "Parent absence". Renamed in the UI — see below. |
 | **Notifications** | ✅ |
 | **History** | ✅ |
@@ -225,7 +244,8 @@ because it blocks the trip from closing.
 | Before the cutoff → applies automatically | ✅ Decided by a database trigger, not the client |
 | After the cutoff → Pending, coordinator approves | ✅ |
 | Permanent hub/address changes are **not** self-service | ✅ The screen says to ask the office |
-| Vehicle location only if GPS is enabled | ✅ Otherwise a panel explains why it is off |
+| Vehicle location only if GPS is enabled | ✅ With it on: live position and ETA per child, and the van on the route map. With it off: a panel explains why. |
+| Absence can cover several days | ✅ Beyond the blueprint. `end_date` on the request; only the first day is judged against the cutoff, so a holiday booked ahead is always in time. |
 
 > ### One rename: "Parent absence" → "Report absence"
 >
@@ -345,7 +365,7 @@ because it blocks the trip from closing.
 | Driver confirmed boarding | Parent | ✅ |
 | Trip delayed | Affected parents | ✅ |
 | Club change approved | Student, Parent, Driver | ⚠️ Goes to the **requester**, not all three |
-| Approaching stop | Parent | ⛔ **Impossible without GPS.** Requires live location, which is switched off. |
+| Approaching stop | Parent | ⚠️ No *push* for it. Since 10 Aug, with GPS on, the parent's card and the map show a live **"minutes away"** from the van's real position — so the information exists, it just is not a notification yet. With GPS off, the scheduled 15/5-minute alerts cover the same need with honest wording ("due in", not "away"). |
 | Safe drop-off | Parent | ✅ |
 | Unable to drop off | Coordinator and Parent | ✅ Marked URGENT |
 
@@ -396,7 +416,7 @@ the same trip data and were easier to get right together.
 | Database | Firestore + security rules | **Postgres + Row Level Security** | The §2.1 rules are the hard part of this product. In Postgres they are enforced *inside the database* and — crucially — can be **tested by attacking them directly**, with no app in the loop. Firestore rules can express the same thing but fail *open* when a clause is missed, and the only way to know is an emulator test suite. §7 says "may use" and explicitly allows a relational database. |
 | Backend logic | Cloud Functions | **Postgres triggers + Edge Functions** | The trip-close guard, the cutoff decision, and the audit log are triggers, so **no write path can bypass them**. As Cloud Functions they would be application code that another path could route around. |
 | Notifications | In-app, then FCM | In-app + Expo Push | Same shape. |
-| Maps | Hub pins only; GPS postponed | Hub pins only; GPS **built and switched off** | As instructed. |
+| Maps | Hub pins only; GPS postponed | Hub pins by default; live van **behind a flag** | As instructed — and the flag is now wired end to end rather than reserved, so the decision to enable it is a policy call, not a build. |
 
 ### Cost
 
@@ -420,14 +440,87 @@ Wherever a map would be, the app shows a panel saying it is off and quoting the
 blueprint sections that say so (§1.2, §7.3, §8), so nobody mistakes it for a
 missing feature.
 
-Behind the switch: the driver's phone streams its position while a trip is
+Behind the switch: the driver's phone reports its position while a trip is
 active, **and** an open HTTP endpoint (`ingest-location`) accepts a `device_key`
 and a bare lat/lng from any hardware tracker that can make an HTTPS POST. Both
 write to the same table; nothing downstream knows which. You can drive a van
 across the map with `curl` before any hardware exists.
 
-Turning it on also makes the parent's **"Approaching"** timeline step possible,
-which is currently the one notification in §6.2 that cannot fire.
+With it on, parents and students get a live **"6 minutes away"** to their own hub,
+computed from the van's actual position and the stops it still has to call at
+first — which is the information §4.2's "Approaching" step was asking for.
+
+> #### It is not continuous tracking, and that is enforced, not promised
+>
+> §1.2 rules out *continuous background location*. So collection is scoped to a
+> running route by **four independent guards**, because one is not enough — a
+> driver who forgets to tap **End trip** must not be followed home:
+>
+> 1. **Start is tied to the trip.** Nothing calls `startTracking()` except
+>    starting a trip, or reopening a trip already running. The permission prompt
+>    happens then, not at app launch.
+> 2. **Opening the driver's home screen cleans up.** `enforceTrackingScope()`
+>    stops a task left running for a trip that is no longer active — and opening
+>    the app is the one thing a driver reliably does the next morning.
+> 3. **The task stops itself.** A six-hour ceiling, plus it treats the database
+>    refusing a row as authoritative: the RLS policy on `vehicle_locations` only
+>    accepts a position for an `active` trip driven by that user, so a refusal
+>    means the route is over and the phone shuts the sensor down — even if the app
+>    is never opened again.
+> 4. **The database is the backstop.** No position can be stored outside an active
+>    trip the caller is driving, whatever the client does.
+>
+> And a **stationary van goes quiet**: reporting is triggered by movement (30 m)
+> with a 90-second heartbeat, not a fix every ten seconds. iOS's own stationary
+> pause is enabled (`pausesUpdatesAutomatically`, previously `false`) with
+> `activityType: AutomotiveNavigation`. The heartbeat exists so the parent screens
+> can tell *parked* from *lost signal* — a distinction they draw, so it has to be
+> real. A van idling at a hub therefore costs almost nothing, which is the direct
+> answer to §8's cost-and-battery condition.
+>
+> Position today comes from the driver's phone. A tracker fitted to the van posts
+> the same rows through `ingest-location`, at which point the phone stops being
+> involved and none of the app above this line changes.
+
+### QR boarding — `attendance_mode = 'scan'`
+
+Not a switched-off feature — it works, and the office chooses per organisation.
+
+The student's Today screen shows a QR code, one per leg of the day. The driver
+gets **"Scan students on"** at each stop once the van has arrived there, and the
+camera stays open between students.
+
+**The driver scans the student, never the reverse.** A code taped inside the van
+that students scanned themselves would be a *self-reported boarding* — the one
+thing §2.1 forbids, because a child can scan it from the pavement and then miss
+the van. Because the driver's phone does the scanning, the write is still a driver
+write and **no RLS policy changed** to enable any of this.
+
+The code lives on the trip row, not the student, so it differs morning and
+afternoon and yesterday's screenshot is worthless. A code scanned off a
+classmate's phone identifies *that classmate* — the driver sees the wrong name and
+stops.
+
+A scan that does not belong to this trip gets a real answer rather than "unknown
+code": `identify_boarding_code()` reports *"Priya rides Route 2 with Sam, not this
+van"*, which is also how a child about to board the **wrong vehicle** gets caught.
+
+Marking students on by name still works underneath. A flat phone has no QR and the
+van still has to leave.
+
+### One tap for the school gate — exception-based drop-off
+
+Where two or more riders are still on board at their drop-off stop — in practice
+the morning arrival at school — the driver gets **"All N dropped off safely"**.
+
+Exceptions are marked **first**, and the count on the button falls as they are. So
+the record names who did *not* get off, rather than asserting that everyone did.
+Each rider still gets their own row, their own timestamp and their own parent
+notification; this is one write, not one outcome.
+
+Deliberately **not** applied to boarding. Bulk-marking children as present is a
+claim about who is physically standing there; bulk-marking them off at a school
+gate is not. Afternoon boarding is answered by scanning instead.
 
 ### Payments — `payments_enabled = false`
 
@@ -566,7 +659,9 @@ complete the workflow without developer assistance.*
 
 ## The gaps, gathered in one place
 
-Nothing here is hidden elsewhere in this document:
+Nothing here is hidden elsewhere in this document.
+
+### Against the blueprint
 
 1. **No CSV export** (§1.1) — partly closed. Every family now gets a weekly report
    in the app (see above), which covers "a basic report". Nothing writes a
@@ -574,9 +669,38 @@ Nothing here is hidden elsewhere in this document:
 2. **Check-in time window not enforced** (§4.1) — the column exists, the check does not.
 3. **No student photos on the driver roster** (§5.1) — a privacy decision for you, not me.
 4. **No photo attachment on incidents** (§5.1).
-5. **"Approaching" notification and timeline step** (§4.2, §6.2) — needs GPS.
+5. **"Approaching" as a notification** (§6.2) — the live ETA now exists on screen
+   with GPS on; nothing pushes it.
 6. **Announcements are not route- or child-targeted** (§5.2).
 7. **No settings screen for cutoff times** (§6.1) — currently a SQL update.
 8. **No audit-log viewer** (§6.1) — entries are being written, nothing displays them.
 9. **Club-change notification** reaches the requester, not student + parent + driver (§6.2).
 10. **No `companyId`** — single-tenant. The expensive one to change later.
+11. **NFC not built.** The `attendance_mode` flag has two values, `manual` and
+    `scan`, and `scan` means QR. QR needs no hardware and works on every phone.
+
+### Found by the 10 August flow review — and not in the blueprint
+
+A design review stress-tested the ride flow and found problems the blueprint never
+raised, several of them safety-critical. They are not listed individually here
+because they have their own document, with an approach and a sequence for each:
+
+> ### 📋 [**The remediation plan →**](REMEDIATION.md)
+
+The four worst, in one line each, so this document does not read as if everything
+is fine:
+
+- **A driver can depart a stop leaving a checked-in student there, and nothing
+  fires** until End trip — potentially forty minutes later.
+- **Nothing on the server watches the clock.** If a driver's phone dies, the trip
+  stays `active` forever and nobody is told. Every safety net currently needs
+  either a driver tap or a coordinator watching a screen.
+- **A student marked absent who turns up cannot be boarded by anyone on the
+  vehicle** — the driver sees no buttons at all, so the realistic outcome is a
+  child riding a van whose record says they are absent.
+- **No offline queue, and no undo.** A dead zone loses the boarding record; a
+  mistapped `no_show` needs a phone call to the office to correct, and a mistapped
+  departure cannot be corrected by a coordinator at all.
+
+The 10 August session closed one of the review's findings outright (the school-gate
+tap load) and half of another (wrong-vehicle detection, in scan mode only).

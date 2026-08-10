@@ -11,6 +11,7 @@ import type {
   StudentTripStatus,
   TripStopProgress,
   Vehicle,
+  VehicleLocation,
 } from './types';
 
 export const today = () => new Date().toISOString().slice(0, 10);
@@ -216,6 +217,86 @@ export function useTripStatuses(date: string = today()) {
     stopProgressOf: (tripId: string | null | undefined, stopId: string | null | undefined) =>
       progress.find((p) => p.trip_id === tripId && p.stop_id === stopId) ?? null,
   };
+}
+
+/**
+ * The van's latest reported position for a trip, live.
+ *
+ * Only meaningful when `gps_enabled` is on — with tracking off, nothing writes
+ * `vehicle_locations` and this stays null, which is exactly what the screens
+ * want: they show the planned-times panel instead of an empty map.
+ *
+ * Reads the newest row rather than a track log. A parent wants "where is it
+ * now", and streaming the whole day's breadcrumbs would cost bandwidth to draw
+ * something nobody asked for. RLS already limits this to today's trips that the
+ * caller is actually connected to.
+ */
+export function useVehicleLocation(
+  vehicleId: string | null | undefined,
+  enabled: boolean,
+) {
+  const [location, setLocation] = useState<VehicleLocation | null>(null);
+  const [loading, setLoading] = useState(true);
+  const instance = useId();
+
+  const reload = useCallback(async () => {
+    if (!enabled || !vehicleId) {
+      setLocation(null);
+      setLoading(false);
+      return;
+    }
+    const { data } = await supabase
+      .from('vehicle_locations')
+      .select('*')
+      .eq('vehicle_id', vehicleId)
+      .order('recorded_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    setLocation((data as VehicleLocation) ?? null);
+    setLoading(false);
+  }, [vehicleId, enabled]);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  useEffect(() => {
+    if (!enabled || !vehicleId) return;
+
+    const channel = supabase
+      .channel(`vehicle:${vehicleId}:${instance}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'vehicle_locations',
+          filter: `vehicle_id=eq.${vehicleId}`,
+        },
+        (payload) => setLocation(payload.new as VehicleLocation),
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [vehicleId, enabled, instance]);
+
+  /**
+   * True when the last fix is old enough that showing it as "live" would be a
+   * lie — a phone that lost signal ten minutes ago should not leave a stale pin
+   * looking current.
+   *
+   * COUPLED to HEARTBEAT_MS in lib/tracking.ts. A parked van deliberately stops
+   * streaming and only heartbeats every 90s, so this has to tolerate a couple of
+   * missed heartbeats or every van waiting at a hub would read as lost. Raise the
+   * heartbeat and this has to move with it.
+   */
+  const stale = location
+    ? Date.now() - new Date(location.recorded_at).getTime() > 4 * 60_000
+    : false;
+
+  return { location, stale, loading, reload };
 }
 
 export function useNotifications(userId: string | null | undefined) {

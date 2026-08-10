@@ -4,7 +4,7 @@ import { useAuth } from '../../src/lib/auth';
 import { useOrg } from '../../src/lib/org';
 import { supabase } from '../../src/lib/supabase';
 import { today, useMyChildren } from '../../src/lib/hooks';
-import { CHANGE_LABEL } from '../../src/lib/types';
+import { CHANGE_LABEL, formatDateSpan } from '../../src/lib/types';
 import type { ChangeKind, ChangeRequest } from '../../src/lib/types';
 import {
   Badge,
@@ -45,7 +45,7 @@ const KINDS: { kind: ChangeKind; label: string; blurb: string; becomes: string }
   {
     kind: 'absent',
     label: 'Report absence',
-    blurb: 'Not travelling at all today — sick, appointment, or away.',
+    blurb: 'Not travelling at all — sick, appointment, or away. Covers a single day or a whole holiday.',
     becomes: 'Absent',
   },
   {
@@ -75,6 +75,10 @@ export default function ParentChange() {
 
   const [childId, setChildId] = useState<string | null>(null);
   const [date, setDate] = useState(today());
+  // A holiday is one request, not twenty. Off by default because almost every
+  // change really is one day, and an end date nobody wanted is a trap.
+  const [multiDay, setMultiDay] = useState(false);
+  const [endDate, setEndDate] = useState('');
   const [reason, setReason] = useState('');
   const [requests, setRequests] = useState<ChangeRequest[]>([]);
   const [error, setError] = useState('');
@@ -97,14 +101,34 @@ export default function ParentChange() {
     if (!childId && children.length) setChildId(children[0].id);
   }, [children, childId]);
 
+  /** Both fields are typed by hand, so check them before the database has to. */
+  function validate(): string | null {
+    const iso = /^\d{4}-\d{2}-\d{2}$/;
+    if (!iso.test(date)) return 'Enter the first date as YYYY-MM-DD.';
+    if (!multiDay) return null;
+    if (!iso.test(endDate)) return 'Enter the last date as YYYY-MM-DD, or switch back to one day.';
+    if (endDate < date) return 'The last day cannot be before the first day.';
+    return null;
+  }
+
   async function submit(kind: ChangeKind) {
     if (!childId || !session) return;
+
+    const problem = validate();
+    if (problem) {
+      setError(problem);
+      return;
+    }
+
     setError('');
     setBusy(true);
+
+    const span = multiDay && endDate !== date ? endDate : null;
 
     const { error: e } = await supabase.from('change_requests').insert({
       student_id: childId,
       date,
+      end_date: span,
       kind,
       reason: reason.trim() || null,
       requested_by: session.user.id,
@@ -119,8 +143,10 @@ export default function ParentChange() {
     setReason('');
     await load();
     Alert.alert(
-      'Sent',
-      'Before the cutoff this applies straight away and the driver sees it. After the cutoff a coordinator has to approve it.',
+      span ? 'Sent — every day covered' : 'Sent',
+      span
+        ? `${nameFor(childId)} is off from ${date} to ${span}. That is one request, not one per day — the driver's roster updates for each of those days as it is built.`
+        : 'Before the cutoff this applies straight away and the driver sees it. After the cutoff a coordinator has to approve it.',
     );
   }
 
@@ -156,17 +182,61 @@ export default function ParentChange() {
           </Row>
         ) : null}
 
-        <Field label="Date" value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" />
+        <Row style={styles.wrap}>
+          <Pressable
+            onPress={() => setMultiDay(false)}
+            style={[styles.chip, !multiDay && styles.chipActive]}
+          >
+            <Text style={[styles.chipText, !multiDay && styles.chipTextActive]}>One day</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => {
+              setMultiDay(true);
+              if (!endDate) setEndDate(date);
+            }}
+            style={[styles.chip, multiDay && styles.chipActive]}
+          >
+            <Text style={[styles.chipText, multiDay && styles.chipTextActive]}>
+              Holiday / several days
+            </Text>
+          </Pressable>
+        </Row>
+
+        <Field
+          label={multiDay ? 'First day away' : 'Date'}
+          value={date}
+          onChangeText={setDate}
+          placeholder="YYYY-MM-DD"
+        />
+        {multiDay ? (
+          <>
+            <Field
+              label="Last day away"
+              value={endDate}
+              onChangeText={setEndDate}
+              placeholder="YYYY-MM-DD"
+            />
+            <Text style={styles.span}>
+              {/^\d{4}-\d{2}-\d{2}$/.test(date) && /^\d{4}-\d{2}-\d{2}$/.test(endDate) && endDate >= date
+                ? `${formatDateSpan(date, endDate)} — one request covers all of it, weekends and holidays included.`
+                : 'Enter both dates as YYYY-MM-DD.'}
+            </Text>
+          </>
+        ) : null}
+
         <Field
           label="Reason (optional)"
           value={reason}
           onChangeText={setReason}
-          placeholder="Doctor's appointment"
+          placeholder={multiDay ? 'Family holiday' : "Doctor's appointment"}
         />
         <Text style={styles.fine}>
           Absence cutoff {org?.morning_cutoff?.slice(0, 5) ?? '06:30'} · pickup and club cutoff{' '}
           {org?.afternoon_cutoff?.slice(0, 5) ?? '13:30'}. Before the cutoff it applies
           automatically; after it, the office reviews it.
+          {multiDay
+            ? ' For several days, only the first day is judged against the cutoff — book ahead and it is always in time.'
+            : ''}
         </Text>
       </Card>
 
@@ -211,7 +281,7 @@ export default function ParentChange() {
                   {nameFor(r.student_id)} · {CHANGE_LABEL[r.kind]}
                 </Text>
                 <Text style={styles.fine}>
-                  {r.date}
+                  {formatDateSpan(r.date, r.end_date)}
                   {r.reason ? ` · ${r.reason}` : ''}
                 </Text>
               </View>
@@ -256,6 +326,7 @@ const styles = StyleSheet.create({
   },
   optionTitle: { fontSize: 15, fontWeight: '700', color: theme.text },
   becomes: { fontSize: 12, color: theme.accent, lineHeight: 17 },
+  span: { fontSize: 12, color: theme.accent, lineHeight: 17 },
   chev: { fontSize: 22, color: theme.faint },
   chip: {
     paddingHorizontal: 13,

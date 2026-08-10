@@ -51,9 +51,10 @@ export function GpsDisabled({ compact = false }: { compact?: boolean }) {
           </View>
 
           <Text style={styles.footer}>
-            The tracking code is written and working — driver phone streaming plus an open HTTP
-            endpoint for hardware trackers. An administrator can switch it on from the portal once
-            the pilot has run and the cost has been measured.
+            Tracking is wired end to end — the van appears on this map with a live ETA the moment an
+            administrator switches it on in the portal, no new build required. It reports only while
+            a route is actually running, and a stationary van goes quiet, which is what keeps §8's
+            cost and battery concerns answerable.
           </Text>
         </>
       )}
