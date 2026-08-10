@@ -17,9 +17,7 @@ Newest first.
 
 ## 10 August 2026
 
-### 16:37 — Turn on scanning and the live map, add holiday absences, and batch the school drop-off
-
-Not committed yet — working tree.
+### 17:09 · `438cb70` — Turn on QR boarding and the live map, add holiday absences, batch the school drop-off
 
 A design review of the ride flow came first (see
 [docs/REMEDIATION.md](docs/REMEDIATION.md) for what it found and what is still
