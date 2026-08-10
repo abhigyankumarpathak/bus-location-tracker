@@ -3,7 +3,12 @@ import { Alert, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../../src/lib/auth';
 import { useFeatures } from '../../src/lib/org';
 import { supabase } from '../../src/lib/supabase';
-import { ensureTodaysTrips, useReference, useTripStatuses } from '../../src/lib/hooks';
+import {
+  ensureTodaysTrips,
+  useReference,
+  useTripStatuses,
+  useVehicleLocation,
+} from '../../src/lib/hooks';
 import {
   RIDER_STATUS_LABEL,
   RIDER_STATUS_TONE,
@@ -11,7 +16,10 @@ import {
   isFinal,
 } from '../../src/lib/types';
 import type { StudentTripStatus } from '../../src/lib/types';
+import { stopsStillToVisit } from '../../src/lib/eta';
 import { ALERT_MINUTES, scheduleArrivalAlerts } from '../../src/lib/alerts';
+import { BoardingPass } from '../../src/components/BoardingPass';
+import { VanEta } from '../../src/components/VanEta';
 import { GpsDisabled } from '../../src/components/Disabled';
 import {
   Badge,
@@ -42,11 +50,11 @@ import {
  */
 export default function StudentToday() {
   const { session, profile } = useAuth();
-  const { gpsEnabled } = useFeatures();
+  const { gpsEnabled, attendanceMode } = useFeatures();
   const me = session?.user.id;
 
   const ref = useReference();
-  const { rows, trips, loading, reload, driverOf } = useTripStatuses();
+  const { rows, trips, loading, reload, driverOf, stopProgressOf } = useTripStatuses();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -56,6 +64,13 @@ export default function StudentToday() {
   }, []);
 
   const mine = rows.filter((r) => r.student_id === me);
+
+  // Only a trip that is actually running has a van worth locating. A student may
+  // have both legs of the day on this screen; at most one of them is under way.
+  const runningTrip = trips.find(
+    (t) => t.status === 'active' && mine.some((r) => r.trip_id === t.id),
+  );
+  const { location, stale } = useVehicleLocation(runningTrip?.vehicle_id, gpsEnabled);
 
   // Blueprint §4.1: alerts 15 and 5 minutes before the van is due. Driven off
   // the planned arrival time, not GPS — see src/lib/alerts.ts.
@@ -161,6 +176,28 @@ export default function StudentToday() {
               value={driverOf(trip?.driver_id)?.full_name.split(' ')[0] ?? 'Not assigned'}
             />
 
+            {/* Where the van actually is, when tracking is on and this is the
+                leg under way. Rendered above the scheduled line because a real
+                position beats a timetable whenever we have one. */}
+            {gpsEnabled && row.trip_id === runningTrip?.id ? (
+              <VanEta
+                location={location}
+                stale={stale}
+                target={ref.stopCoords(row.pickup_stop_id)}
+                hubName={hub ?? 'your stop'}
+                stopsBefore={
+                  row.pickup_stop_id
+                    ? stopsStillToVisit(
+                        ref.stopsFor(trip?.route_id),
+                        row.pickup_stop_id,
+                        (stopId) => Boolean(stopProgressOf(row.trip_id, stopId)?.departed_at),
+                        ref.stopCoords,
+                      )
+                    : []
+                }
+              />
+            ) : null}
+
             {/* Blueprint §4.1: alerts 15 and 5 minutes before the van is due. */}
             {stop?.planned_arrival || stop?.planned_departure ? (
               <Text style={styles.fine}>
@@ -173,6 +210,16 @@ export default function StudentToday() {
                 alerts for it.
               </Text>
             )}
+
+            {/* The QR code the driver scans, when the office runs scan mode.
+                Hidden once they are on board — it has done its job, and leaving
+                it up invites a second scan. */}
+            {attendanceMode === 'scan' && !done && !['boarded', 'in_transit'].includes(row.status) ? (
+              <BoardingPass
+                row={row}
+                label={`${route ? ROUTE_TYPE_LABEL[route.type] : 'This trip'} · ${hub ?? 'your stop'}`}
+              />
+            ) : null}
 
             {canCheckIn ? (
               <>
@@ -208,10 +255,30 @@ export default function StudentToday() {
       <ErrorText>{error}</ErrorText>
 
       <SectionLabel>Where is the van?</SectionLabel>
-      {gpsEnabled ? (
-        <Empty>Live tracking is enabled. The map appears here once the van reports.</Empty>
-      ) : (
+      {!gpsEnabled ? (
         <GpsDisabled />
+      ) : !runningTrip ? (
+        <Empty>
+          Live tracking is on. The van appears here once your driver starts the trip.
+        </Empty>
+      ) : location ? (
+        <Card>
+          <VanEta
+            location={location}
+            stale={stale}
+            target={ref.stopCoords(mine.find((r) => r.trip_id === runningTrip.id)?.pickup_stop_id ?? null)}
+            hubName={
+              ref.stopName(mine.find((r) => r.trip_id === runningTrip.id)?.pickup_stop_id) ??
+              'your stop'
+            }
+            showMap
+          />
+        </Card>
+      ) : (
+        <Empty>
+          The trip has started but the van has not reported its position yet. It may still be
+          getting signal.
+        </Empty>
       )}
     </Screen>
   );

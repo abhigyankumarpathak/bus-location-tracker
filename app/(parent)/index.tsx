@@ -6,6 +6,7 @@ import {
   useMyChildren,
   useReference,
   useTripStatuses,
+  useVehicleLocation,
 } from '../../src/lib/hooks';
 import {
   RIDER_STATUS_LABEL,
@@ -13,7 +14,10 @@ import {
   ROUTE_TYPE_LABEL,
 } from '../../src/lib/types';
 import type { RiderStatus, StudentTripStatus } from '../../src/lib/types';
+import { stopsStillToVisit } from '../../src/lib/eta';
+import type { Coord } from '../../src/lib/eta';
 import { ALERT_MINUTES, scheduleArrivalAlerts } from '../../src/lib/alerts';
+import { VanEta } from '../../src/components/VanEta';
 import { GpsDisabled } from '../../src/components/Disabled';
 import {
   Badge,
@@ -139,6 +143,24 @@ export default function ParentChildren() {
                     <Timeline row={row} />
                     <Text style={styles.next}>{nextEvent(row.status)}</Text>
 
+                    {/* Where the van actually is, when tracking is on and this
+                        child's trip is the one under way. */}
+                    {gpsEnabled && trip?.status === 'active' ? (
+                      <LiveVan
+                        vehicleId={trip.vehicle_id}
+                        stops={ref.stopsFor(trip.route_id)}
+                        targetStopId={ref.hubStopId(row.pickup_stop_id, row.dropoff_stop_id)}
+                        hubName={
+                          ref.stopName(ref.hubStopId(row.pickup_stop_id, row.dropoff_stop_id)) ??
+                          'the hub'
+                        }
+                        coordsOf={ref.stopCoords}
+                        hasDeparted={(stopId) =>
+                          Boolean(stopProgressOf(row.trip_id, stopId)?.departed_at)
+                        }
+                      />
+                    ) : null}
+
                     {(() => {
                       const hubStopId = ref.hubStopId(row.pickup_stop_id, row.dropoff_stop_id);
                       const hub = ref.stopName(hubStopId);
@@ -185,11 +207,51 @@ export default function ParentChildren() {
 
       <SectionLabel>Vehicle location</SectionLabel>
       {gpsEnabled ? (
-        <Empty>Live tracking is on. The map appears here once the van reports.</Empty>
+        <Empty>
+          Each child's card above shows their van's position while their trip is running. The Map
+          tab has the full route.
+        </Empty>
       ) : (
         <GpsDisabled />
       )}
     </Screen>
+  );
+}
+
+/**
+ * One child's live van position.
+ *
+ * A component rather than a few lines inline because `useVehicleLocation` is a
+ * hook and a parent may have several children on several vans — each card needs
+ * its own subscription, and hooks cannot be called in a loop.
+ */
+function LiveVan({
+  vehicleId,
+  stops,
+  targetStopId,
+  hubName,
+  coordsOf,
+  hasDeparted,
+}: {
+  vehicleId: string | null;
+  stops: { id: string; seq: number }[];
+  targetStopId: string | null;
+  hubName: string;
+  coordsOf(stopId: string | null | undefined): Coord | null;
+  hasDeparted(stopId: string): boolean;
+}) {
+  const { location, stale } = useVehicleLocation(vehicleId, true);
+
+  if (!targetStopId) return null;
+
+  return (
+    <VanEta
+      location={location}
+      stale={stale}
+      target={coordsOf(targetStopId)}
+      hubName={hubName}
+      stopsBefore={stopsStillToVisit(stops, targetStopId, hasDeparted, coordsOf)}
+    />
   );
 }
 

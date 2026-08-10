@@ -1,22 +1,27 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../../src/lib/auth';
 import { useFeatures } from '../../../src/lib/org';
 import { supabase } from '../../../src/lib/supabase';
 import { useReference, useTripStatuses } from '../../../src/lib/hooks';
+import { isTracking, reportOnce, startTracking, stopTracking } from '../../../src/lib/tracking';
 import {
   RIDER_STATUS_LABEL,
   RIDER_STATUS_TONE,
   ROUTE_TYPE_LABEL,
+  decodeBoardingQr,
   isFinal,
 } from '../../../src/lib/types';
 import type {
+  BoardingCodeOwner,
   IncidentKind,
   Profile,
   RiderStatus,
   StudentTripStatus,
 } from '../../../src/lib/types';
+import { BoardingScanner } from '../../../src/components/BoardingScanner';
+import type { ScanFeedback } from '../../../src/components/BoardingScanner';
 import { GpsDisabled } from '../../../src/components/Disabled';
 import {
   Badge,
@@ -58,7 +63,7 @@ const DROP_ACTIONS: { status: RiderStatus; label: string; variant?: 'primary' | 
 export default function DriverTrip() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { session } = useAuth();
-  const { gpsEnabled } = useFeatures();
+  const { gpsEnabled, attendanceMode } = useFeatures();
   const me = session?.user.id;
 
   const ref = useReference();
@@ -69,6 +74,13 @@ export default function DriverTrip() {
   const [busyStop, setBusyStop] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [incidentNote, setIncidentNote] = useState('');
+
+  /** Which stop the scanner is open for. Null = closed. */
+  const [scanStop, setScanStop] = useState<string | null>(null);
+
+  /** What the van is actually doing about its position, in the driver's words. */
+  const [trackingState, setTrackingState] = useState<'off' | 'background' | 'foreground'>('off');
+  const [trackingNote, setTrackingNote] = useState('');
 
   const trip = trips.find((t) => t.id === id) ?? null;
   const riders = useMemo(() => rows.filter((r) => r.trip_id === id), [rows, id]);
@@ -101,6 +113,81 @@ export default function DriverTrip() {
   useEffect(() => {
     loadStudents();
   }, [loadStudents]);
+
+  /**
+   * Begin reporting the van's position.
+   *
+   * Position comes from the DRIVER'S PHONE today. When a hardware tracker is
+   * fitted to the van it POSTs to the ingest-location endpoint instead and this
+   * call becomes unnecessary — nothing downstream changes, because both write the
+   * same `vehicle_locations` rows and no reader knows the difference.
+   *
+   * A refused permission does not stop the route. The driver still has a trip to
+   * run; they just get told plainly that the map will be empty, rather than the
+   * parents seeing a van that never moves.
+   */
+  const beginTracking = useCallback(
+    async (vehicleId: string | null, tripId: string) => {
+      if (!gpsEnabled || !vehicleId) return;
+
+      const result = await startTracking(vehicleId, tripId);
+
+      if (!result.ok) {
+        setTrackingState('off');
+        setTrackingNote(result.message ?? 'The van is not reporting its position.');
+        return;
+      }
+      setTrackingState(result.foregroundOnly ? 'foreground' : 'background');
+      setTrackingNote(result.message ?? '');
+    },
+    [gpsEnabled],
+  );
+
+  // Pick tracking back up when the driver reopens the screen mid-route. The
+  // background task survives the app being killed, but a driver who only granted
+  // "While Using" is on the foreground timer below, and that dies with the screen.
+  useEffect(() => {
+    if (!gpsEnabled || !trip || trip.status !== 'active') return;
+
+    let cancelled = false;
+    (async () => {
+      if (await isTracking()) {
+        if (!cancelled) setTrackingState('background');
+        return;
+      }
+      if (!cancelled) await beginTracking(trip.vehicle_id, trip.id);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gpsEnabled, trip?.id, trip?.status, trip?.vehicle_id, beginTracking]);
+
+  // Foreground-only fallback. Without background permission there is no task, so
+  // the screen reports on a timer for as long as the driver is looking at it.
+  //
+  // Gated on the trip being ACTIVE, like everything else that touches location:
+  // an open screen is not a running route. reportOnce() skips the write when the
+  // van has not moved, so a van idling at a hub costs a GPS read and nothing else.
+  useEffect(() => {
+    if (trackingState !== 'foreground') return;
+    if (!trip || trip.status !== 'active' || !trip.vehicle_id) return;
+
+    const vehicleId = trip.vehicle_id;
+    const tripId = trip.id;
+    const tick = () => {
+      reportOnce(vehicleId, tripId).catch(() => {
+        // A dropped fix is not worth interrupting the driver over — the next one
+        // is thirty seconds away.
+      });
+    };
+
+    tick();
+    const timer = setInterval(tick, 30_000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trackingState, trip?.id, trip?.status, trip?.vehicle_id]);
 
   const nameOf = (studentId: string) =>
     students.find((s) => s.id === studentId)?.full_name ?? 'Student';
@@ -173,6 +260,136 @@ export default function DriverTrip() {
     await reload();
   }
 
+  /**
+   * Drop off everyone still on board at this stop, in one write.
+   *
+   * The morning arrival at school is what this exists for: a whole van of
+   * children get off in the same place at the same moment, and tapping them off
+   * one at a time is up to thirty taps carrying no information — which trains
+   * exactly the rapid tap-through that would make the AFTERNOON's per-child
+   * confirmations unreliable, and those do carry information.
+   *
+   * Exceptions are marked FIRST, and this covers who is left. Anyone the driver
+   * has already recorded as unable to drop off is excluded by construction (they
+   * are no longer onboard-at-this-stop), and the count on the button falls as
+   * they do it. So the record says who did not get off, instead of asserting
+   * that everyone did — which is the whole reason a single end-of-route tap was
+   * the wrong shape.
+   *
+   * Every rider still gets their own row and their own notification. This is one
+   * write, not one outcome: the timestamp they share is the moment the doors
+   * actually opened, which is true for all of them.
+   */
+  async function dropAllAt(stopId: string, ids: string[]) {
+    if (!ids.length) return;
+
+    setBusyStop(stopId);
+    setError('');
+
+    const now = new Date().toISOString();
+    const { error: e } = await supabase
+      .from('student_trip_status')
+      .update({ status: 'dropped_off', dropoff_time: now, updated_by: me, updated_at: now })
+      .in('id', ids);
+
+    setBusyStop(null);
+    if (e) return setError(e.message);
+    await reload();
+  }
+
+  function confirmDropAll(stopId: string, ids: string[], where: string) {
+    Alert.alert(
+      `Drop off ${ids.length} students?`,
+      `This records all ${ids.length} as dropped off safely at ${where}, and tells their parents.\n\nIf anyone did NOT get off here, cancel and mark them first — then this button covers whoever is left.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: `Yes, all ${ids.length} are off`, onPress: () => dropAllAt(stopId, ids) },
+      ],
+    );
+  }
+
+  /**
+   * Resolve a scanned QR code, for attendance_mode = 'scan'.
+   *
+   * Returning null means "not one of our codes" and the scanner keeps looking
+   * without saying anything. Everything else produces a banner.
+   *
+   * The rule this follows: a scan is a faster way to press Boarded, never a wider
+   * one. Anything the manual buttons would refuse, this refuses too — and says
+   * why, which the manual buttons cannot do because they simply are not there.
+   */
+  const resolveScan = useCallback(
+    async (raw: string): Promise<ScanFeedback | null> => {
+      const parsed = decodeBoardingQr(raw);
+      if (!parsed) return null;
+
+      const row = riders.find((r) => r.id === parsed.rowId);
+
+      // Not on this trip at all. This is the wrong-van case, and it is worth a
+      // round trip to name it: "unknown code" would leave the driver guessing
+      // whether the app is broken or the child is about to board the wrong bus.
+      if (!row) {
+        const { data, error: e } = await supabase.rpc('identify_boarding_code', {
+          code: parsed.code,
+        });
+        if (e) return { tone: 'danger', message: e.message };
+
+        const owner = (data as BoardingCodeOwner[] | null)?.[0];
+        if (!owner) {
+          return { tone: 'danger', message: 'That code is not one of ours. Board them by name.' };
+        }
+        if (!owner.is_today) {
+          return {
+            tone: 'danger',
+            message: `${owner.student_name} is showing a code for ${owner.trip_date}. Ask them to reopen the app.`,
+          };
+        }
+        return {
+          tone: 'danger',
+          message: `${owner.student_name} rides ${owner.route_name} with ${owner.driver_name} — not this van. Do not carry them; call the office.`,
+        };
+      }
+
+      const name = nameOf(row.student_id);
+
+      if (row.boarding_code !== parsed.code) {
+        return {
+          tone: 'danger',
+          message: `${name}'s code is out of date. Ask them to reopen the app, or board them by name.`,
+        };
+      }
+      if (['boarded', 'in_transit'].includes(row.status)) {
+        return { tone: 'warn', message: `${name} is already on board.` };
+      }
+      if (isFinal(row.status)) {
+        return {
+          tone: 'warn',
+          message: `${name} is recorded as ${RIDER_STATUS_LABEL[row.status]} today. Use the roster to change that.`,
+        };
+      }
+      if (row.pickup_stop_id !== scanStop) {
+        return {
+          tone: 'warn',
+          message: `${name} boards at ${ref.stopName(row.pickup_stop_id) ?? 'another stop'}, not here.`,
+        };
+      }
+
+      const now = new Date().toISOString();
+      const { error: e } = await supabase
+        .from('student_trip_status')
+        .update({ status: 'boarded', board_time: now, updated_by: me, updated_at: now })
+        .eq('id', row.id);
+
+      if (e) return { tone: 'danger', message: e.message };
+
+      // No explicit reload: useTripStatuses follows the table, so the roster
+      // behind the camera is already updating.
+      return { tone: 'success', message: `${name} is on board.` };
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [riders, scanStop, me, ref.stopName, students],
+  );
+
   function confirmUnableToDrop(row: StudentTripStatus) {
     // Blueprint §6.3: the student stays onboard and the coordinator must act.
     // This blocks the trip from closing, so make sure it is not a misfire.
@@ -197,8 +414,12 @@ export default function DriverTrip() {
       .from('daily_trips')
       .update({ status: 'active', started_at: new Date().toISOString() })
       .eq('id', trip.id);
-    if (e) setError(e.message);
+    if (e) {
+      setError(e.message);
+      return;
+    }
     await reload();
+    await beginTracking(trip.vehicle_id, trip.id);
   }
 
   async function endTrip() {
@@ -226,6 +447,13 @@ export default function DriverTrip() {
       setError(e.message);
       return;
     }
+
+    // The route is over: stop following the driver. Tracking exists to show the
+    // van to the families riding it, not to know where the driver goes next.
+    await stopTracking();
+    setTrackingState('off');
+    setTrackingNote('');
+
     await reload();
     Alert.alert('Trip completed', 'Every student has a final status.');
     router.back();
@@ -332,6 +560,25 @@ export default function DriverTrip() {
         // An all-away stop can be left without arriving — there is nobody to see.
         const canDepart = active && !isDestination && !departed && reachable && (arrived || allAway);
 
+        // Who is still waiting to board here, and who is still on board to be
+        // let off here. Both drive the batch actions below.
+        const toBoardHere = atStop.filter(
+          (r) => r.pickup_stop_id === stop.id && !isFinal(r.status) && r.status !== 'boarded' && r.status !== 'in_transit',
+        );
+        const toDropHere = atStop.filter(
+          (r) =>
+            r.dropoff_stop_id === stop.id &&
+            ['boarded', 'in_transit'].includes(r.status),
+        );
+
+        // Scanning is per stop, so the driver cannot accidentally board a child
+        // against the wrong hub, and only once the van is actually here.
+        const canScan = active && attendanceMode === 'scan' && arrived && !departed && toBoardHere.length > 0;
+
+        // Two or more people getting off in the same place at the same moment is
+        // the case worth batching — overwhelmingly the morning arrival at school.
+        const canDropAll = active && arrived && toDropHere.length >= 2;
+
         return (
           <View key={stop.id} style={styles.stopBlock}>
             <SectionLabel>
@@ -385,6 +632,49 @@ export default function DriverTrip() {
               <Card style={styles.skip}>
                 <Text style={styles.skipText}>
                   Everyone at this stop is away today — you can skip it.
+                </Text>
+              </Card>
+            ) : null}
+
+            {/* Scan students on, when the office has that mode switched on. */}
+            {canScan ? (
+              <Card style={styles.batch}>
+                <Text style={styles.batchTitle}>
+                  {toBoardHere.length} to board {isOrigin ? 'at school' : 'here'}
+                </Text>
+                <Button
+                  label="Scan students on"
+                  style={styles.action}
+                  onPress={() => setScanStop(stop.id)}
+                />
+                <Text style={styles.fine}>
+                  You scan the code on their phone. The buttons on each student still work if a
+                  phone is flat.
+                </Text>
+              </Card>
+            ) : null}
+
+            {/* One tap for everyone getting off here — mark the exceptions first. */}
+            {canDropAll ? (
+              <Card style={styles.batch}>
+                <Text style={styles.batchTitle}>
+                  {toDropHere.length} still on board for {ref.stopName(stop.id) ?? 'this stop'}
+                </Text>
+                <Button
+                  label={`All ${toDropHere.length} dropped off safely`}
+                  loading={busyStop === stop.id}
+                  style={styles.action}
+                  onPress={() =>
+                    confirmDropAll(
+                      stop.id,
+                      toDropHere.map((r) => r.id),
+                      ref.stopName(stop.id) ?? 'this stop',
+                    )
+                  }
+                />
+                <Text style={styles.fine}>
+                  Anyone who did NOT get off — mark them below first, and this covers whoever is
+                  left. Each student still gets their own record and their parents still get told.
                 </Text>
               </Card>
             ) : null}
@@ -485,12 +775,81 @@ export default function DriverTrip() {
         </Row>
       </Card>
 
-      <SectionLabel>Navigation</SectionLabel>
-      {gpsEnabled ? (
-        <Empty>Live tracking is on.</Empty>
-      ) : (
+      <SectionLabel>Van position</SectionLabel>
+      {!gpsEnabled ? (
         <GpsDisabled compact />
+      ) : !trip.vehicle_id ? (
+        <Card>
+          <Text style={styles.fine}>
+            No vehicle is assigned to this trip, so there is nothing to report a position for. Ask
+            the transport office to assign one.
+          </Text>
+        </Card>
+      ) : trip.status !== 'active' ? (
+        <Card>
+          <Text style={styles.fine}>
+            The van starts sharing its position when you start the trip and stops when you end it.
+            Your phone is not sharing anything right now.
+          </Text>
+        </Card>
+      ) : (
+        <Card>
+          <Row style={styles.between}>
+            <Text style={styles.trackingTitle}>
+              {trackingState === 'background'
+                ? '🛰️ Sharing position'
+                : trackingState === 'foreground'
+                  ? '⚠️ Sharing only on this screen'
+                  : '⚠️ Not sharing position'}
+            </Text>
+            <Badge
+              label={trackingState === 'background' ? 'Live' : trackingState === 'foreground' ? 'Limited' : 'Off'}
+              tone={trackingState === 'background' ? 'success' : trackingState === 'foreground' ? 'warn' : 'danger'}
+            />
+          </Row>
+          <Text style={styles.fine}>
+            {trackingState === 'background'
+              ? 'Students and parents on this route can see the van. It stops the moment you end the trip — and stops itself if you forget.'
+              : trackingNote ||
+                'The van is not reporting its position, so the map is empty for every family on this route.'}
+          </Text>
+          {trackingState === 'background' ? (
+            <Text style={styles.fine}>
+              Only while a route is running, and only this van's position — never you off-shift. A
+              parked van reports about once a minute instead of continuously.
+            </Text>
+          ) : null}
+          {trackingState !== 'background' ? (
+            <Button
+              label="Try again"
+              variant="secondary"
+              onPress={() => beginTracking(trip.vehicle_id, trip.id)}
+            />
+          ) : null}
+        </Card>
       )}
+
+      {/* Lives outside the stop loop: one camera, opened against one stop. */}
+      <BoardingScanner
+        visible={scanStop !== null}
+        onClose={() => {
+          setScanStop(null);
+          reload();
+        }}
+        onScan={resolveScan}
+        subtitle={
+          scanStop
+            ? `${ref.stopName(scanStop) ?? 'Stop'} · ${
+                riders.filter(
+                  (r) =>
+                    r.pickup_stop_id === scanStop &&
+                    !isFinal(r.status) &&
+                    !['boarded', 'in_transit'].includes(r.status),
+                ).length
+              } still to board`
+            : undefined
+        }
+      />
     </Screen>
   );
 }
@@ -507,6 +866,9 @@ const styles = StyleSheet.create({
   resolved: { opacity: 0.65 },
   stopBlock: { gap: 12 },
   progressCard: { gap: 10, backgroundColor: theme.surfaceAlt },
+  batch: { gap: 10, borderColor: theme.accent },
+  batchTitle: { fontSize: 15, fontWeight: '700', color: theme.text },
+  trackingTitle: { fontSize: 15, fontWeight: '700', color: theme.text, flexShrink: 1 },
   skip: { backgroundColor: theme.surfaceAlt },
   skipText: { fontSize: 13, color: theme.muted },
   urgent: { borderColor: theme.danger, backgroundColor: '#2A1D1D' },

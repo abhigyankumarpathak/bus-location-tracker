@@ -4,7 +4,7 @@ import { useAuth } from '../../src/lib/auth';
 import { useOrg } from '../../src/lib/org';
 import { supabase } from '../../src/lib/supabase';
 import { today } from '../../src/lib/hooks';
-import { CHANGE_LABEL } from '../../src/lib/types';
+import { CHANGE_LABEL, formatDateSpan } from '../../src/lib/types';
 import type { ChangeKind, ChangeRequest } from '../../src/lib/types';
 import {
   Badge,
@@ -118,7 +118,7 @@ export default function StudentClub() {
             <Row style={styles.between}>
               <View style={styles.grow}>
                 <Text style={styles.optionTitle}>{CHANGE_LABEL[r.kind]}</Text>
-                <Text style={styles.fine}>{r.date}</Text>
+                <Text style={styles.fine}>{formatDateSpan(r.date, r.end_date)}</Text>
               </View>
               <Badge
                 label={

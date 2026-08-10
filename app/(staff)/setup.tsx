@@ -1325,8 +1325,8 @@ export default function StaffSetup() {
             <View style={styles.grow}>
               <Text style={styles.name}>Attendance</Text>
               <Text style={styles.fine}>
-                How riders are marked on board. Manual: the driver taps each student. Scan (NFC/QR):
-                students check themselves on, so the driver can keep their attention on driving.
+                How riders are marked on board. Manual: the driver taps each student by name. Scan
+                (QR): the student shows a code and the driver scans it — on both legs of the day.
               </Text>
             </View>
             <Row style={styles.wrap}>
@@ -1337,18 +1337,25 @@ export default function StaffSetup() {
                 onPress={() => setFlag({ attendance_mode: 'manual' })}
               />
               <Button
-                label="Scan (NFC/QR)"
+                label="Scan (QR)"
                 variant={org?.attendance_mode === 'scan' ? 'primary' : 'secondary'}
                 disabled={!isAdmin}
                 onPress={() => setFlag({ attendance_mode: 'scan' })}
               />
             </Row>
             {org?.attendance_mode === 'scan' ? (
-              <Text style={styles.warn}>
-                Scanning is not built yet — the driver still marks attendance by hand for now. This
-                records the intent so the switch is ready when NFC/QR ships.
+              <Text style={styles.fine}>
+                Students see a code on their Today screen; drivers get a “Scan students on” button at
+                each stop once they have arrived. The code is per trip, so it changes every day and a
+                screenshot is useless tomorrow. The driver does the scanning — a code the student
+                scanned themselves would be a self-reported boarding, which §2.1 forbids. Marking
+                students on by name still works underneath, for a flat phone.
               </Text>
-            ) : null}
+            ) : (
+              <Text style={styles.fine}>
+                NFC is not built. QR covers the same job on every phone without extra hardware.
+              </Text>
+            )}
           </Card>
 
           <Card>
@@ -1356,7 +1363,9 @@ export default function StaffSetup() {
               <View style={styles.grow}>
                 <Text style={styles.name}>Live GPS tracking</Text>
                 <Text style={styles.fine}>
-                  Driver phone streaming plus an HTTP endpoint for hardware trackers.
+                  Puts the van on the parent and student maps, with an ETA from where it actually is
+                  rather than the timetable. Position comes from the driver's phone; the same rows
+                  can come from a tracker fitted to the van instead, with no app change.
                 </Text>
               </View>
               <Switch
@@ -1372,6 +1381,13 @@ export default function StaffSetup() {
               </Text>
               <Text style={styles.cite}>Blueprint §8 — Cost-control requirements</Text>
             </View>
+            <Text style={styles.fine}>
+              Nothing here is continuous. A phone reports only while its driver has a trip running —
+              it starts on “Start trip”, stops on “End trip”, stops itself if a driver forgets, and
+              the database refuses a position for any trip that is not active. A van that is not
+              moving reports about once a minute rather than every few seconds, so a parked van costs
+              almost nothing and nobody is followed off-shift.
+            </Text>
           </Card>
 
           <Card>

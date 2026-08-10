@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFeatures } from '../../src/lib/org';
-import { useMyChildren, useReference, useTripStatuses } from '../../src/lib/hooks';
+import {
+  useMyChildren,
+  useReference,
+  useTripStatuses,
+  useVehicleLocation,
+} from '../../src/lib/hooks';
 import { ROUTE_TYPE_LABEL } from '../../src/lib/types';
 import { Map } from '../../src/components/Map';
 import type { MapMarker } from '../../src/components/Map';
@@ -55,6 +60,11 @@ export default function ParentMap() {
   const route = ref.routeOf(routeId);
   const stops = ref.stopsFor(routeId);
 
+  // The van running the route currently being looked at — which may not be the
+  // parent's own child's route, since they can browse the others.
+  const shownTrip = trips.find((t) => t.route_id === routeId && t.status === 'active');
+  const { location: van, stale: vanStale } = useVehicleLocation(shownTrip?.vehicle_id, gpsEnabled);
+
   // The hub each of this parent's children uses, so their own stop stands out
   // from the rest of the line. This is the HUB, not the school: afternoon runs
   // school -> hub, so pickup_stop_id there is the school. hubStopId picks
@@ -85,8 +95,15 @@ export default function ParentMap() {
         kind: myStopIds.has(stop.id) ? 'pickup' : 'stop',
       });
     }
+
+    // The van last, so it draws over the stop pins rather than under them. A
+    // stale fix is left off entirely: a pin that has not moved in ten minutes
+    // reads as "the van is parked there", which is a worse answer than none.
+    if (van && !vanStale) {
+      out.push({ id: 'van', lat: van.lat, lng: van.lng, title: 'The van', kind: 'bus' });
+    }
     return out;
-  }, [stops, ref, myStopIds]);
+  }, [stops, ref, myStopIds, van, vanStale]);
 
   const path = useMemo(
     () =>
@@ -145,7 +162,13 @@ export default function ParentMap() {
 
       {markers.length > 0 ? (
         <Card style={styles.mapCard}>
-          <Map markers={markers} path={path} style={styles.map} zoom={13} />
+          <Map
+            markers={markers}
+            path={path}
+            style={styles.map}
+            zoom={van && !vanStale ? 14 : 13}
+            center={van && !vanStale ? { lat: van.lat, lng: van.lng } : null}
+          />
         </Card>
       ) : (
         <Empty>
@@ -154,9 +177,39 @@ export default function ParentMap() {
         </Empty>
       )}
 
-      {/* Blueprint §7.3 — hub pins only. Say why the van is not on the map,
-          rather than leaving a gap that looks broken. */}
-      {gpsEnabled ? null : <GpsDisabled />}
+      {/* With tracking off this is hub pins only (§7.3), and the panel says why
+          rather than leaving a gap that looks broken. With it on, say what the
+          map is actually showing — including when the van is not on it. */}
+      {!gpsEnabled ? (
+        <GpsDisabled />
+      ) : !shownTrip ? (
+        <Card>
+          <Text style={styles.fine}>
+            This route is not running right now, so the map shows its stops only. The van appears
+            here while the trip is under way.
+          </Text>
+        </Card>
+      ) : van && !vanStale ? (
+        <Card>
+          <Text style={styles.live}>🚌 The van is on the map, updating as it moves.</Text>
+          <Text style={styles.fine}>
+            Last reported{' '}
+            {new Date(van.recorded_at).toLocaleTimeString([], {
+              hour: 'numeric',
+              minute: '2-digit',
+            })}
+            .
+          </Text>
+        </Card>
+      ) : (
+        <Card>
+          <Text style={styles.noAddress}>
+            {van
+              ? 'The van has gone quiet — its last position was too old to show. It may be somewhere with no signal.'
+              : 'The trip has started but the van has not reported a position yet.'}
+          </Text>
+        </Card>
+      )}
 
       <SectionLabel>Stops, in order</SectionLabel>
 
@@ -228,4 +281,5 @@ const styles = StyleSheet.create({
   address: { fontSize: 13, color: theme.muted, lineHeight: 18 },
   noAddress: { fontSize: 12, color: theme.warn, lineHeight: 17 },
   fine: { fontSize: 12, color: theme.faint, lineHeight: 17 },
+  live: { fontSize: 14, fontWeight: '700', color: theme.accent, lineHeight: 20 },
 });

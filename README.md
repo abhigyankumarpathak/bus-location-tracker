@@ -22,6 +22,14 @@ sentence true even when things go wrong.
 > Also: [setup guide](supabase/SETUP.md) · [the database](supabase/schema.sql) ·
 > [weekly report and purge](supabase/retention.sql)
 
+> ### 🛠 [**Known problems, and the plan to fix them →**](docs/REMEDIATION.md)
+>
+> A flow review found 22 issues the blueprint never raised — four of them paths
+> where a child can go unaccounted for and nobody is alerted. Read this one before
+> a pilot with real children.
+>
+> ### 🗓 [**Changelog →**](CHANGELOG.md)
+
 ## The rule that shapes everything
 
 > **A student checking in means "I am waiting at the hub." It does not mean "I

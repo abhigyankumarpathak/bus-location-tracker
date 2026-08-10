@@ -171,8 +171,38 @@ export interface StudentTripStatus {
   board_time: string | null;
   dropoff_time: string | null;
   note: string | null;
+  /**
+   * The token behind this rider's QR code, when `attendance_mode` is 'scan'.
+   * Regenerated per trip row, so it is good for one leg of one day.
+   */
+  boarding_code: string;
   updated_by: string | null;
   updated_at: string;
+}
+
+/** What the driver's app encodes in, and reads out of, a student's QR code. */
+export const BOARDING_QR_PREFIX = 'bustracker.board';
+
+export function encodeBoardingQr(row: Pick<StudentTripStatus, 'id' | 'boarding_code'>) {
+  return `${BOARDING_QR_PREFIX}:${row.id}:${row.boarding_code}`;
+}
+
+/** Null when the payload is not one of ours — a random QR code on a lamppost. */
+export function decodeBoardingQr(raw: string): { rowId: string; code: string } | null {
+  const parts = raw.trim().split(':');
+  if (parts.length !== 3 || parts[0] !== BOARDING_QR_PREFIX) return null;
+  if (!parts[1] || !parts[2]) return null;
+  return { rowId: parts[1], code: parts[2] };
+}
+
+/** What `identify_boarding_code()` returns for a code the driver cannot board. */
+export interface BoardingCodeOwner {
+  student_name: string;
+  route_name: string;
+  route_kind: RouteType;
+  driver_name: string;
+  trip_date: string;
+  is_today: boolean;
 }
 
 /** The van's actual arrival and departure at one stop of one day's trip. */
@@ -188,6 +218,11 @@ export interface ChangeRequest {
   id: string;
   student_id: string;
   date: string;
+  /**
+   * Last day covered, for a holiday or a long illness. Null means a single day.
+   * Always read as `end_date ?? date`.
+   */
+  end_date: string | null;
   kind: ChangeKind;
   reason: string | null;
   requested_by: string | null;
@@ -364,6 +399,25 @@ export const FINAL_STATUSES: RiderStatus[] = [
 ];
 
 export const isFinal = (s: RiderStatus) => FINAL_STATUSES.includes(s);
+
+/**
+ * How a change request's dates read in the UI: "Wed 12 Aug", or "12 Aug – 30 Aug
+ * · 19 days" for a holiday. Parsed as local noon so a date-only string cannot
+ * slip to the previous day west of UTC.
+ */
+export function formatDateSpan(date: string, endDate: string | null): string {
+  const at = (d: string) => new Date(`${d}T12:00:00`);
+  const short = (d: Date) => d.toLocaleDateString([], { day: 'numeric', month: 'short' });
+
+  const from = at(date);
+  if (!endDate || endDate === date) {
+    return from.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
+  }
+
+  const to = at(endDate);
+  const days = Math.round((to.getTime() - from.getTime()) / 86_400_000) + 1;
+  return `${short(from)} – ${short(to)} · ${days} days`;
+}
 
 export const CHANGE_LABEL: Record<ChangeKind, string> = {
   absent: 'Absent',

@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { useAuth } from '../../src/lib/auth';
 import { ensureTodaysTrips, useReference, useTripStatuses } from '../../src/lib/hooks';
+import { enforceTrackingScope } from '../../src/lib/tracking';
 import { ROUTE_TYPE_LABEL, isFinal } from '../../src/lib/types';
 import {
   Badge,
@@ -33,6 +34,23 @@ export default function DriverToday() {
     ensureTodaysTrips().then(reload);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /**
+   * A driver is followed while they are driving a route, and never otherwise.
+   *
+   * This screen is where the app learns which trips are actually running, so it
+   * is where a location task left over from a forgotten "End trip" gets shut
+   * down. Opening the app is the one thing a driver reliably does the next
+   * morning, and it must not be the morning their phone has been reporting all
+   * night.
+   *
+   * Runs once the trip list has loaded — an empty list before then would look
+   * like "no route is running" and stop a perfectly good one.
+   */
+  useEffect(() => {
+    if (loading) return;
+    enforceTrackingScope(trips.filter((t) => t.status === 'active').map((t) => t.id));
+  }, [loading, trips]);
 
   if (loading || ref.loading) return <Loading />;
 

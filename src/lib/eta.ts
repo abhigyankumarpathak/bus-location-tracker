@@ -70,6 +70,31 @@ export function etaMinutes(
   return Math.max(0, Math.round((km / speedKmh) * 60 + dwellMinutes));
 }
 
+/**
+ * The stops the van must still call at before it reaches `targetStopId`, in
+ * order — the `stopsBefore` argument to `etaMinutes`.
+ *
+ * "Still" is the important word: a stop the van has already pulled away from is
+ * behind it, and counting that distance again would inflate every ETA down the
+ * route. Kept as a pure function of the caller's own lookups so both the parent
+ * and student screens get the same answer without either of them owning it.
+ */
+export function stopsStillToVisit(
+  stops: { id: string; seq: number }[],
+  targetStopId: string,
+  hasDeparted: (stopId: string) => boolean,
+  coordsOf: (stopId: string) => Coord | null,
+): Coord[] {
+  const target = stops.find((s) => s.id === targetStopId);
+  if (!target) return [];
+
+  return stops
+    .filter((s) => s.seq < target.seq && !hasDeparted(s.id))
+    .sort((a, b) => a.seq - b.seq)
+    .map((s) => coordsOf(s.id))
+    .filter((c): c is Coord => c !== null);
+}
+
 export function formatEta(minutes: number | null): string {
   if (minutes === null) return 'No signal from the van yet';
   if (minutes <= 0) return 'Arriving now';
