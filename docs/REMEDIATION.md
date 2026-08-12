@@ -330,22 +330,39 @@ It also has a live dependency in **Still unanswered** below: *cell coverage
 across the whole route* decides whether C3 is a safeguard or load-bearing, and
 that changes how much of it is worth building.
 
-## Still unanswered
+## Answered — 12 August 2026
 
-These change the design, and no amount of code decides them:
+These were the questions no amount of code could decide. Six are now settled.
 
-- **Is the coordinator watching a screen during the run?** The whole exception
-  design assumes an attended dashboard. If the answer is “sometimes”, C2 stops
-  being a should-have and becomes the only safety net that exists.
-- **Must a guardian be present at afternoon drop-off, and does the driver verify?**
-  This alone decides whether `dropped_off` is one tap or a two-party confirmation.
-- **What ages?** A reception child and a sixth-former imply different drop-off
-  rules and different no-show urgency. Nothing in the model carries age.
-- **Cell coverage across the whole route?** Decides whether C3 is a safeguard or
-  load-bearing.
-- **Company phones or personal?** Battery is now a safety dependency.
-- **Jurisdiction's record-keeping requirement for child transport custody?** May
-  already dictate the drop-off answer, the retention policy, and how much of the
-  weekly purge is legal.
-- **Is three vans the business, or the first customer?** Single-tenant with no
-  `companyId` is the expensive thing to change later.
+| Question | Answer | What it means for the build |
+| --- | --- | --- |
+| **Guardian present at afternoon drop-off?** | **No — one tap is right.** | No change. `dropped_off` stays a single tap and the batch "All N dropped off safely" keeps working. No authorised-collector list, no two-party confirmation. |
+| **What ages?** | **High schoolers, plus one or two middle schoolers.** | No age column needed. Everyone is old enough to walk home, so the single-tap drop-off above is consistent with the ages, and no-show urgency stays uniform. Revisit only if primary-age children are ever carried. |
+| **Cell coverage?** | **Good. Two known dead spots; most stops have data.** | C3 stays a **safeguard**, not the backbone — which confirms leaving it last was right. But it is now scoped: the outbox must survive *two* stops' worth of actions, not one, and the watchdog thresholds must exceed the longest dead-spot crossing or the office gets a false alarm on every run through them. **Worth timing those two spots before C3 is designed.** |
+| **Three vans — business or first customer?** | **This is the business.** | Single-tenant is correct. No `companyId`, and the schema's SCOPE NOTE can stop reading like a warning. This is a saved cost, not debt. |
+| **Coordinator watching a screen during the run?** | **No — nobody watches live.** | The most consequential answer here. The exception queue is pull-based, so it is *not a delivery mechanism*. **C2, the watchdog, is now the only safety net that exists** — everything depends on alerts reaching a phone. This is what drove the 12 August push work: real OS notifications, per-channel routing, delivery recorded per message, urgent kinds requiring acknowledgement, and unacknowledged ones escalating back to the office. |
+| **Company phones or personal?** | **Personal.** | Nothing about the device can be mandated — not charging, not battery optimisation, not "Always" background location. So the app must degrade *honestly* rather than assume: `PushStatus` now tells a driver or family when notifications are off and why, instead of failing silently. Battery being a safety dependency is now a stated risk rather than an unexamined one. |
+
+### Still open
+
+- **Jurisdiction's record-keeping requirement for child transport custody?** —
+  *needs checking.* This is a live risk, not a nicety. The weekly purge currently
+  deletes routine ride detail after `retention_weeks` (default **3 weeks**) once
+  it has been archived into a report; incidents and overrides are kept forever.
+  If the law requires a longer custody record, that purge is a compliance problem
+  — and the fix is small, but only while the data still exists. Worth answering
+  before the first purge runs on real data.
+
+### Two things the answers changed
+
+**Personal phones + nobody watching a screen** is the combination that matters.
+Together they mean the office learns about a problem *only* if a notification
+reaches a phone that the operator does not control and cannot mandate settings
+on. Push stopped being a nice-to-have the moment both were true, which is why it
+moved from "wired but never actually delivering" to a first-class, diagnosable,
+acknowledged path.
+
+**Two dead spots, not blanket bad coverage** makes C3 a bounded piece of work
+rather than an architecture change. It also means the watchdog needs its
+thresholds set against the real crossing time of those two spots — a number
+nobody has measured yet.

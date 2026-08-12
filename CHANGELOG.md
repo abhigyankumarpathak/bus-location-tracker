@@ -17,6 +17,68 @@ Newest first.
 
 ## 12 August 2026
 
+### Push notifications that actually arrive, and a real split between “wrong” and “happened”
+
+Prompted by two answers to the plan's open questions: **nobody watches the
+coordinator dashboard during a run**, and **drivers use personal phones**.
+Together those mean the exception queue is a record rather than a delivery
+mechanism, and the office finds out about a problem only if a notification
+reaches a device nobody controls the settings of.
+
+**Push was silently dead. The cause was one missing line.**
+
+- `app.json` had no `extra.eas.projectId`, so `getExpoPushTokenAsync()` threw on
+  every launch, a bare `catch` swallowed it, `registerForPush` returned `null`,
+  and **no device ever stored a push token**. Every notification the system has
+  ever generated went to the in-app inbox and nowhere else.
+- Nothing anywhere reported this. Not the user, not the office, not a log.
+- `registerForPush` now returns a typed reason instead of `null`, and a
+  `<PushStatus/>` banner on the student, parent and driver home screens says
+  which of the three requirements is missing — in words the person reading it
+  can act on. It says nothing at all when push is working.
+
+**Arrival alerts now ring.**
+
+- `send-push` sent `sound: null` and `priority: 'normal'` for everything except
+  emergencies — so “your van is due in 15 minutes”, whose entire job is *start
+  walking now*, arrived as a silent banner on a phone in a pocket. Arrival and
+  delay alerts are now sound + high priority: not urgent, but **time-critical**,
+  and one that lands after the van has gone is worse than none.
+- Urgent kinds get `interruptionLevel: 'time-sensitive'` on iOS, so a Focus mode
+  cannot silence “could not drop off” — exactly when someone most needs
+  interrupting.
+
+**Three Android notification channels instead of one.**
+
+`urgent`, `arrivals` and `default`. One channel for everything means a family
+who mutes the routine pings also mutes the child-unaccounted-for one. `send-push`
+routes each message to the right channel by kind.
+
+**Tapping a notification goes somewhere.** A response listener routes to the
+inbox (where urgent messages can be acknowledged) or to the driver's run.
+Previously a push just reopened the app wherever it was last left.
+
+**The staff Exceptions tab is now two tabs.**
+
+It had become one scroll containing emergencies, routine approvals and a
+notification feed — which meant the emergencies got scrolled past.
+
+- **Exceptions** — only what is *wrong*, ordered by how bad it is if nobody
+  looks: a child still on a van, a child who checked in and was then not picked
+  up, what the watchdog noticed that no human reported, students with no outcome,
+  no-shows, **messages that were not delivered**, and open incidents.
+- **Notifications** — the stream: the office's own feed, plus approvals waiting
+  on a decision, plus announcements already sent. Nothing here means anything is
+  broken.
+
+Exceptions sits first in the tab bar, because a stream can wait.
+
+**Also:** the seven open questions in the remediation plan now have six answers
+recorded in [docs/REMEDIATION.md](docs/REMEDIATION.md), with what each one
+changes about the build. The one still open — the jurisdiction's record-keeping
+requirement for child transport custody — is flagged as a live risk against the
+weekly purge, which currently deletes routine ride detail after three weeks.
+
 ### The rest of the remediation plan — everything except C3
 
 Twenty-one of the review's twenty-two findings are now closed. Applied as

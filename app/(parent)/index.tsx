@@ -29,6 +29,7 @@ import {
   Title,
   theme,
 } from '../../src/components/ui';
+import { PushStatus } from '../../src/components/PushStatus';
 
 /**
  * My Children (blueprint §4.2): one card per linked child with the current
@@ -70,6 +71,7 @@ export default function ParentChildren() {
     return (
       <Screen>
         <Title sub="Link a child and their trips appear here.">My children</Title>
+        <PushStatus compact />
         <Empty>No children linked yet. Use the More tab to send a link request.</Empty>
       </Screen>
     );
@@ -78,6 +80,7 @@ export default function ParentChildren() {
   return (
     <Screen>
       <Title sub="Today's trips for each of your children.">My children</Title>
+      <PushStatus compact />
 
       {children.map((child) => {
         const childRows = rows.filter((r) => r.student_id === child.id);

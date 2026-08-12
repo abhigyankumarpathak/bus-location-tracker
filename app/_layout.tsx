@@ -1,12 +1,13 @@
 import { useEffect } from 'react';
-import { Text, View } from 'react-native';
-import { Stack } from 'expo-router';
+import { Platform, Text, View } from 'react-native';
+import { Stack, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AuthProvider, useAuth } from '../src/lib/auth';
 import { OrgProvider } from '../src/lib/org';
 import { isConfigured } from '../src/lib/supabase';
+import * as Notifications from 'expo-notifications';
 import { registerForPush } from '../src/lib/push';
 import { SetupNeeded } from '../src/components/SetupNeeded';
 import { Button, Card, Loading, Screen, Title, theme } from '../src/components/ui';
@@ -28,8 +29,46 @@ function RootNavigator() {
   const { session, profile, loading, staffUnlocked, isStaff, profileMissing, signOut } = useAuth();
 
   useEffect(() => {
-    if (session?.user.id && profile?.status === 'active') registerForPush(session.user.id);
+    if (session?.user.id && profile?.status === 'active') {
+      // Fire and forget. The RESULT is surfaced by <PushStatus/> on the screens
+      // where it matters — the failure used to be swallowed here and nobody,
+      // including the family, ever learned that push was off.
+      registerForPush(session.user.id);
+    }
   }, [session?.user.id, profile?.status]);
+
+  // Tapping a push should land you on the thing it is about. Without this a
+  // notification just opens the app on whatever screen it was last on, which for
+  // "URGENT — could not drop off" is the wrong screen at the worst moment.
+  useEffect(() => {
+    const role = profile?.role;
+    // expo-notifications has no web implementation, and the staff portal is a
+    // browser app by design (blueprint §7.3). Nothing to listen to there.
+    if (!role || Platform.OS === 'web') return;
+
+    const inbox =
+      role === 'parent'
+        ? '/(parent)/alerts'
+        : role === 'coordinator' || role === 'admin'
+          ? '/(staff)/notifications'
+          : null;
+
+    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const kind = response.notification.request.content.data?.kind as string | undefined;
+
+      // A driver's notifications are all about the run they are on.
+      if (role === 'driver') {
+        router.push('/(driver)');
+        return;
+      }
+      // Everyone else: the urgent ones go to the inbox where they can be
+      // acknowledged, which is the whole point of requiring an acknowledgement.
+      if (inbox) router.push(inbox);
+      else if (kind) router.push('/');
+    });
+
+    return () => sub.remove();
+  }, [profile?.role]);
 
   // A stored session whose account no longer exists — deleted by an admin, or
   // left behind by a schema rebuild. Without this the app sits on a spinner

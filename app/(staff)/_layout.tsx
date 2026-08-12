@@ -17,11 +17,20 @@ export default function StaffLayout() {
           tabBarIcon: ({ focused }) => <TabIcon glyph="📋" focused={focused} />,
         }}
       />
+      {/* Exceptions first: it is the tab that means something is wrong right
+          now. Notifications is the stream, and a stream can wait. */}
       <Tabs.Screen
         name="exceptions"
         options={{
           title: 'Exceptions',
           tabBarIcon: ({ focused }) => <TabIcon glyph="⚠️" focused={focused} />,
+        }}
+      />
+      <Tabs.Screen
+        name="notifications"
+        options={{
+          title: 'Notifications',
+          tabBarIcon: ({ focused }) => <TabIcon glyph="🔔" focused={focused} />,
         }}
       />
       <Tabs.Screen

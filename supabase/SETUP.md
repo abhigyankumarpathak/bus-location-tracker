@@ -122,18 +122,62 @@ automatically — you do not set those.
 
 Without `admin-unlock` deployed, the staff portal cannot be opened at all.
 
-## 7. Push notifications (optional)
+## 7. Push notifications — **required, not optional**
 
-Alerts already appear in-app. To deliver them when the app is closed:
+Nobody watches the coordinator dashboard during a run (confirmed 12 August), so
+the exception queue is a record, not a delivery mechanism. **Push is the only way
+anyone finds out about anything while it still matters.** All three steps below
+are needed; miss any one and every alert lands in the in-app inbox and nowhere
+else, silently.
 
-**Database → Webhooks → Create a new hook**
+**1. An EAS project id in `app.json`.** This was the actual bug — there was none,
+so `getExpoPushTokenAsync` threw, the error was swallowed, and no device ever
+stored a token.
+
+```jsonc
+// app.json
+"extra": { "eas": { "projectId": "your-project-id-here" } }
+```
+
+Get it with `npx eas init` (or from expo.dev → your project → Project settings).
+`EXPO_PUBLIC_EAS_PROJECT_ID` in `.env` also works and overrides it. **Rebuild
+after changing this** — it is baked into the bundle.
+
+**2. The database webhook.** Database → Webhooks → Create a new hook:
 
 - Table `notifications`, event `Insert`
 - Type: **Supabase Edge Functions** → `send-push`
 - HTTP header: `Authorization: Bearer <your service role key>`
 
-That header is how `send-push` knows the request came from your database. Push
-also needs an EAS project and a physical device — the simulator cannot receive it.
+That header is how `send-push` knows the request came from your database.
+
+**3. A development build on a real phone.** Push has not worked in Expo Go since
+SDK 53, and simulators cannot receive it at all. `npx expo run:ios` /
+`npx expo run:android`.
+
+### Checking it actually works
+
+The app tells you now instead of failing quietly. A student, parent or driver
+whose device cannot receive push sees a banner on their main screen saying which
+of the three things is wrong.
+
+From the office: **Exceptions → “Messages that were not delivered”** lists
+everyone the push path could not reach in the last week, and why. `no_token`
+means that person has never opened the app on a phone that granted permission.
+
+If a notification row's `delivery_state` stays `pending` for ever, step 2 is the
+missing one — nothing is calling `send-push` at all.
+
+### What rings, and what does not
+
+Three Android channels, so a family can mute the routine pings without also
+muting the one that matters:
+
+| Channel | Used for | Behaviour |
+| --- | --- | --- |
+| `urgent` | Could not drop off; no-show after a check-in | Max importance, sound, vibrate, and `time-sensitive` on iOS so a Focus mode does not silence it |
+| `arrivals` | The 15- and 5-minute “your van is due” alerts | High importance with sound — time-critical, because an alert that arrives after the van has gone is worse than none |
+| `default` | Boarding, drop-off, delays, announcements | Normal |
 
 ## 8. Weekly report + purge (keeps the database small)
 

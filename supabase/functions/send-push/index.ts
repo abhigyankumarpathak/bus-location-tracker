@@ -89,6 +89,17 @@ Deno.serve(async (req) => {
     record.kind === 'unable_to_drop_off' ||
     record.kind === 'no_show_after_checkin';
 
+  // An arrival alert whose whole job is "start walking to the hub now" is
+  // useless as a silent banner on a phone in a pocket. It gets a sound and high
+  // priority — not because it is urgent, but because it is TIME-CRITICAL, and a
+  // notification that arrives after the van has gone is worse than none.
+  const timeCritical = record.kind === 'arrival' || record.kind === 'delay';
+
+  // Android 8+ routes by channel, and the channel is what decides whether a
+  // family can mute the routine pings without also muting the urgent ones. The
+  // app creates all three at registration (see src/lib/push.ts).
+  const channelId = urgent ? 'urgent' : record.kind === 'arrival' ? 'arrivals' : 'default';
+
   let response: Response;
   try {
     response = await fetch('https://exp.host/--/api/v2/push/send', {
@@ -98,8 +109,12 @@ Deno.serve(async (req) => {
         to: profile.expo_push_token,
         title: record.title,
         body: record.body,
-        sound: urgent ? 'default' : null,
-        priority: urgent ? 'high' : 'normal',
+        sound: urgent || timeCritical ? 'default' : null,
+        priority: urgent || timeCritical ? 'high' : 'normal',
+        channelId,
+        // iOS: without this an urgent alert is silenced by a Focus mode, which
+        // is exactly when somebody most needs to be interrupted.
+        ...(urgent ? { interruptionLevel: 'time-sensitive' } : {}),
         data: { notification_id: record.id, kind: record.kind },
       }),
     });

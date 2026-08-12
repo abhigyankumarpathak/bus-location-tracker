@@ -33,6 +33,7 @@ import {
   Title,
   theme,
 } from '../../src/components/ui';
+import { PushStatus } from '../../src/components/PushStatus';
 
 /**
  * The student's Today screen (blueprint §4.1).
@@ -106,6 +107,7 @@ export default function StudentToday() {
     return (
       <Screen>
         <Title sub={profile?.full_name || undefined}>Today</Title>
+        <PushStatus compact />
         {/* Blueprint §4.1: say this plainly rather than showing an empty page. */}
         <Empty>No transportation scheduled today.</Empty>
         <Card>
@@ -120,6 +122,7 @@ export default function StudentToday() {
   return (
     <Screen>
       <Title sub={profile?.full_name || undefined}>Today</Title>
+      <PushStatus compact />
 
       {mine.map((row) => {
         const trip = trips.find((t) => t.id === row.trip_id);
