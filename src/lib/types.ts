@@ -78,6 +78,17 @@ export interface Organization {
    * not an edge case.
    */
   undo_window_sec: number;
+
+  /**
+   * The timezone the VANS run in — a region name like 'America/New_York', not
+   * an abbreviation like 'EST' (which is a fixed -05:00 and wrong all summer).
+   *
+   * `planned_arrival` and `planned_departure` are wall-clock times with no zone
+   * attached. Everything that compares against them resolves through this: the
+   * watchdog, the arrival alerts, the change cutoff and the check-in window.
+   * Wrong here means all four are wrong by the same number of hours.
+   */
+  time_zone: string;
 }
 
 /** The five things the watchdog can notice. Mirrors the `watchdog_kind` enum. */

@@ -179,6 +179,23 @@ muting the one that matters:
 | `arrivals` | The 15- and 5-minute “your van is due” alerts | High importance with sound — time-critical, because an alert that arrives after the van has gone is worse than none |
 | `default` | Boarding, drop-off, delays, announcements | Normal |
 
+## 7b. Tell it what clock the vans run on
+
+**Setup → Watchdog → "What clock are the vans on?"**
+
+`planned_arrival` and `planned_departure` are wall-clock times with no timezone
+attached. Four separate things compare against them — the watchdog, the 15- and
+5-minute arrival alerts, the change-request deadline, and the check-in window —
+and all four resolve through `organization.time_zone`.
+
+Supabase runs your database in **UTC**. If your vans run in New York and this is
+left at the default, every one of those four is **four or five hours out**: the
+watchdog decides the morning route was overdue before the day started, and
+families get "your van is due in 15 minutes" overnight.
+
+Use a **region name** (`America/New_York`), never an abbreviation (`EST`). The
+region follows daylight saving; `EST` is a fixed −05:00 and is wrong all summer.
+
 ## 8. Weekly report + purge (keeps the database small)
 
 **Run [`retention.sql`](./retention.sql) in the SQL Editor.** It is purely
@@ -310,6 +327,10 @@ live data and idempotent. Run them in filename order:
 2. `2026-08-12b-c2-c5-c6-c7-c8-and-the-s-n-series.sql`
 3. `2026-08-12c-stale-note.sql` — one function. **Only needed if you applied
    1 and 2 before this file existed;** they now contain the fix themselves.
+4. `2026-08-12d-timezone.sql` — **read the first line before running it.** It sets
+   the operation's timezone to `America/New_York`; change that if your vans run
+   somewhere else. Without it every planned time is compared against the
+   database's clock, which on Supabase is UTC.
 
 Then paste **`supabase/patches/verify.sql`** into the SQL editor. It checks every
 table, column, function and trigger the patches create — plus that the C4 guard
