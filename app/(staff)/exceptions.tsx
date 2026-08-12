@@ -5,19 +5,18 @@ import { useAuth } from '../../src/lib/auth';
 import { supabase } from '../../src/lib/supabase';
 import { useReference, useTripStatuses } from '../../src/lib/hooks';
 import {
-  CHANGE_LABEL,
   RIDER_STATUS_LABEL,
   RIDER_STATUS_TONE,
-  formatDateSpan,
+  WATCHDOG_LABEL,
   isFinal,
 } from '../../src/lib/types';
 import type {
-  AssignmentRequest,
-  ChangeRequest,
+  AppNotification,
   Incident,
   Profile,
   RiderStatus,
   StudentTripStatus,
+  WatchdogAlert,
 } from '../../src/lib/types';
 import {
   Badge,
@@ -35,16 +34,24 @@ import {
 } from '../../src/components/ui';
 
 /**
- * The exception queue (blueprint §5.2 / §6.3).
+ * Things that are WRONG. Not things that happened.
  *
- * Everything that needs a human: late change requests, students the driver
- * could not drop off, no-shows, students still unaccounted for, and open
- * incidents.
+ * This tab used to be everything — the feed, the approvals, the no-shows and the
+ * emergencies in one scroll — which meant the emergencies were scrolled past.
+ * The routine half now lives on Notifications, and what is left here is only the
+ * work that means something has gone wrong and a person has to fix it.
  *
- * Overriding a driver's official record requires a reason (blueprint §2.1:
- * "Only coordinators and administrators may override an official status, and a
- * reason is required"). The reason is written to `note`, which the audit trigger
- * copies into audit_logs — so every override is attributable afterwards.
+ * Ordered by how bad it is if nobody looks, not by when it arrived:
+ *   1. a child on a van nobody can get off it
+ *   2. a child who said they were at the hub and was then not picked up
+ *   3. what the watchdog noticed that no human reported at all
+ *   4. children with no outcome on a trip that has already run
+ *   5. messages the system could not deliver
+ *   6. open incidents
+ *
+ * Overriding a driver's record requires a reason (blueprint §2.1). The reason is
+ * written to `note`, which the audit trigger copies into audit_logs — so every
+ * override is attributable afterwards, and shows up on the History tab.
  */
 const OVERRIDES: RiderStatus[] = [
   'dropped_off',
@@ -60,89 +67,89 @@ export default function StaffExceptions() {
   const ref = useReference();
   const { rows, trips, loading, reload } = useTripStatuses();
 
-  const [requests, setRequests] = useState<ChangeRequest[]>([]);
-  const [assignmentReqs, setAssignmentReqs] = useState<AssignmentRequest[]>([]);
   const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [alerts, setAlerts] = useState<WatchdogAlert[]>([]);
+  const [undelivered, setUndelivered] = useState<AppNotification[]>([]);
   const [people, setPeople] = useState<Profile[]>([]);
   const [error, setError] = useState('');
+  const [checking, setChecking] = useState(false);
 
   const [overriding, setOverriding] = useState<string | null>(null);
   const [reason, setReason] = useState('');
 
   const load = useCallback(async () => {
-    const [{ data: cr }, { data: ar }, { data: inc }, { data: pr }] = await Promise.all([
-      supabase.from('change_requests').select('*').eq('approval', 'pending').order('created_at'),
-      supabase.from('assignment_requests').select('*').eq('status', 'pending').order('created_at'),
+    const [{ data: inc }, { data: wd }, { data: nd }, { data: pr }] = await Promise.all([
       supabase.from('incidents').select('*').is('resolved_at', null).order('created_at', { ascending: false }),
+      supabase.from('watchdog_alerts').select('*').is('resolved_at', null).order('raised_at', { ascending: false }),
+      // Messages the push path could not deliver. `no_token` is the common one:
+      // that person has never opened the app on a phone that granted
+      // notification permission, so they are unreachable and nobody knew.
+      supabase
+        .from('notifications')
+        .select('*')
+        .in('delivery_state', ['no_token', 'failed'])
+        .gte('created_at', new Date(Date.now() - 7 * 86_400_000).toISOString())
+        .order('created_at', { ascending: false })
+        .limit(50),
       supabase.from('profiles').select('*'),
     ]);
-    setRequests((cr as ChangeRequest[]) ?? []);
-    setAssignmentReqs((ar as AssignmentRequest[]) ?? []);
     setIncidents((inc as Incident[]) ?? []);
+    setAlerts((wd as WatchdogAlert[]) ?? []);
+    setUndelivered((nd as AppNotification[]) ?? []);
     setPeople((pr as Profile[]) ?? []);
   }, []);
 
-  // Tabs stay mounted, so a mount-only fetch never refreshes. Refetch on focus.
   useFocusEffect(
     useCallback(() => {
       load();
     }, [load]),
   );
 
-  const nameOf = (id: string | null) =>
-    people.find((p) => p.id === id)?.full_name ?? 'Unknown';
+  const nameOf = (id: string | null) => people.find((p) => p.id === id)?.full_name ?? 'Unknown';
 
-  async function decide(request: ChangeRequest, approved: boolean) {
+  /**
+   * Run the watchdog now rather than waiting up to five minutes for cron.
+   *
+   * Worth having as a button because the honest answer to "is anything wrong
+   * right now?" should not depend on where you are in the cron cycle — and
+   * because on a project where pg_cron was never enabled, this is the only way
+   * it runs at all.
+   */
+  async function checkNow() {
+    setChecking(true);
     setError('');
-    const { error: e } = await supabase
-      .from('change_requests')
-      .update({
-        approval: approved ? 'approved' : 'rejected',
-        reviewed_by: profile?.id,
-        reviewed_at: new Date().toISOString(),
-      })
-      .eq('id', request.id);
-
+    const { error: e } = await supabase.rpc('transport_watchdog');
+    setChecking(false);
     if (e) {
       setError(e.message);
       return;
     }
-
-    // Tell whoever asked.
-    if (request.requested_by) {
-      await supabase.from('notifications').insert({
-        user_id: request.requested_by,
-        title: approved ? 'Change approved' : 'Change not approved',
-        body: `${CHANGE_LABEL[request.kind]} for ${formatDateSpan(request.date, request.end_date)} was ${approved ? 'approved' : 'rejected'}.`,
-        kind: 'approval',
-      });
-    }
-
     await load();
-    await reload();
   }
 
-  async function decideAssignment(req: AssignmentRequest, approve: boolean) {
+  async function resolveAlert(alert: WatchdogAlert) {
     setError('');
-    // review_assignment_request applies the change to the student and notifies
-    // the parent, all in one transaction — the client never writes the students
-    // table directly.
-    const { error: e } = await supabase.rpc('review_assignment_request', {
-      request_id: req.id,
-      approve,
-      note: null,
-    });
+    const { error: e } = await supabase
+      .from('watchdog_alerts')
+      .update({
+        resolved_at: new Date().toISOString(),
+        resolved_by: profile?.id,
+        resolution: `Acknowledged by ${profile?.full_name ?? 'the office'}.`,
+      })
+      .eq('id', alert.id);
     if (e) {
       setError(e.message);
       return;
     }
     await load();
-    await reload();
   }
 
   async function override(row: StudentTripStatus, status: RiderStatus) {
     if (!reason.trim()) {
-      Alert.alert('Reason required', 'Overriding the driver’s record needs a reason. It is recorded in the audit log.');
+      Alert.alert(
+        'Reason required',
+        'Overriding the driver’s record needs a reason. It is recorded in the audit log.',
+      );
       return;
     }
     setError('');
@@ -156,12 +163,10 @@ export default function StaffExceptions() {
     if (status === 'dropped_off') patch.dropoff_time = new Date().toISOString();
 
     const { error: e } = await supabase.from('student_trip_status').update(patch).eq('id', row.id);
-
     if (e) {
       setError(e.message);
       return;
     }
-
     setOverriding(null);
     setReason('');
     await reload();
@@ -179,6 +184,8 @@ export default function StaffExceptions() {
 
   const stuck = rows.filter((r) => r.status === 'unable_to_drop_off');
   const noShows = rows.filter((r) => r.status === 'no_show');
+  const checkedInNoShows = noShows.filter((r) => r.check_in_time);
+  const plainNoShows = noShows.filter((r) => !r.check_in_time);
   // Students on a trip that already ran but who never got an outcome.
   const missing = rows.filter((r) => {
     const trip = trips.find((t) => t.id === r.trip_id);
@@ -187,14 +194,12 @@ export default function StaffExceptions() {
 
   const nothing =
     !stuck.length &&
-    !noShows.length &&
+    !checkedInNoShows.length &&
+    !plainNoShows.length &&
     !missing.length &&
-    !requests.length &&
-    !assignmentReqs.length &&
-    !incidents.length;
-
-  const schoolName = (id: string | null) => ref.schoolOf(id)?.name ?? 'Not set';
-  const hubName = (id: string | null) => ref.hubOf(id)?.name ?? 'Not set';
+    !incidents.length &&
+    !alerts.length &&
+    !undelivered.length;
 
   function renderRow(row: StudentTripStatus, tone: 'danger' | 'warn') {
     const trip = trips.find((t) => t.id === row.trip_id);
@@ -260,103 +265,77 @@ export default function StaffExceptions() {
 
   return (
     <Screen>
-      <Title sub="Everything that needs a person.">Exceptions</Title>
+      <Title sub="Only what has gone wrong. Everything else is on Notifications.">Exceptions</Title>
 
       <ErrorText>{error}</ErrorText>
 
-      {nothing ? <Empty>Nothing outstanding. The day is clean.</Empty> : null}
+      {nothing ? <Empty>Nothing is wrong. The day is clean.</Empty> : null}
+
+      <Button
+        label={checking ? 'Checking…' : 'Check for anything unreported'}
+        variant="ghost"
+        loading={checking}
+        onPress={checkNow}
+      />
 
       {stuck.length > 0 ? (
         <>
-          <SectionLabel>Urgent — unable to drop off</SectionLabel>
+          <SectionLabel>Urgent — still on a vehicle</SectionLabel>
           <Card style={styles.urgent}>
             <Text style={styles.urgentBody}>
-              These students are still on a vehicle. The driver cannot close the trip until you
-              resolve each one. Contact the parent and record what happened.
+              The driver could not drop these students off, so they are still in the van. The trip
+              cannot close until you resolve each one. Contact the parent and record what happened.
             </Text>
           </Card>
           {stuck.map((r) => renderRow(r, 'danger'))}
         </>
       ) : null}
 
-      {requests.length > 0 ? (
+      {checkedInNoShows.length > 0 ? (
         <>
-          <SectionLabel>Late changes awaiting approval</SectionLabel>
-          {requests.map((r) => (
-            <Card key={r.id}>
-              <Row style={styles.between}>
-                <View style={styles.grow}>
-                  <Text style={styles.name}>
-                    {nameOf(r.student_id)} · {CHANGE_LABEL[r.kind]}
-                  </Text>
-                  <Text style={styles.fine}>
-                    {formatDateSpan(r.date, r.end_date)} · asked by {nameOf(r.requested_by)}
-                    {r.reason ? ` · ${r.reason}` : ''}
-                  </Text>
-                </View>
-                <Badge label="Pending" tone="warn" />
-              </Row>
-              <Text style={styles.fine}>
-                Sent after the cutoff, so it needs your decision before it reaches the driver.
-              </Text>
-              <Row>
-                <Button label="Approve" onPress={() => decide(r, true)} style={styles.grow} />
-                <Button
-                  label="Reject"
-                  variant="danger"
-                  onPress={() => decide(r, false)}
-                  style={styles.grow}
-                />
-              </Row>
-            </Card>
-          ))}
+          <SectionLabel>Checked in, then not picked up</SectionLabel>
+          <Card style={styles.urgent}>
+            <Text style={styles.urgentBody}>
+              These students told the app they were at the hub, and the driver then recorded a
+              no-show. Nobody knows where they are. Call the parent first.
+            </Text>
+          </Card>
+          {checkedInNoShows.map((r) => renderRow(r, 'danger'))}
         </>
       ) : null}
 
-      {assignmentReqs.length > 0 ? (
+      {/*
+        The watchdog's own findings. These are the only items on this screen that
+        NOBODY reported — every other section exists because a driver or a parent
+        tapped something. If the coordinator is not watching a screen during the
+        run, this section is the entire safety net.
+      */}
+      {alerts.length > 0 ? (
         <>
-          <SectionLabel>Hub & school changes awaiting approval</SectionLabel>
-          {assignmentReqs.map((r) => (
-            <Card key={r.id}>
+          <SectionLabel>Noticed by the watchdog — nobody reported these</SectionLabel>
+          {alerts.map((a) => (
+            <Card key={a.id} style={styles.urgent}>
               <Row style={styles.between}>
                 <View style={styles.grow}>
-                  <Text style={styles.name}>{nameOf(r.student_id)}</Text>
+                  <Text style={styles.name}>{WATCHDOG_LABEL[a.kind]}</Text>
                   <Text style={styles.fine}>
-                    asked by {nameOf(r.requested_by)}
-                    {r.reason ? ` · ${r.reason}` : ''}
+                    Raised{' '}
+                    {new Date(a.raised_at).toLocaleTimeString([], {
+                      hour: 'numeric',
+                      minute: '2-digit',
+                    })}
                   </Text>
                 </View>
-                <Badge label="Pending" tone="warn" />
+                <Badge label="Unattended" tone="danger" />
               </Row>
-              <Text style={styles.fine}>School → {schoolName(r.school_id)}</Text>
-              <Text style={styles.fine}>Morning hub → {hubName(r.morning_hub_id)}</Text>
-              <Text style={styles.fine}>Afternoon hub → {hubName(r.afternoon_hub_id)}</Text>
-              <Text style={styles.fine}>
-                Approving updates the student. If the new hub is not on their current route, re-seat
-                them on the Setup tab.
-              </Text>
-              <Row>
-                <Button
-                  label="Approve"
-                  onPress={() => decideAssignment(r, true)}
-                  style={styles.grow}
-                />
-                <Button
-                  label="Reject"
-                  variant="danger"
-                  onPress={() => decideAssignment(r, false)}
-                  style={styles.grow}
-                />
-              </Row>
+              <Text style={styles.body}>{a.detail}</Text>
+              <Button
+                label="I have dealt with this"
+                variant="secondary"
+                onPress={() => resolveAlert(a)}
+              />
             </Card>
           ))}
-        </>
-      ) : null}
-
-      {noShows.length > 0 ? (
-        <>
-          <SectionLabel>No-shows</SectionLabel>
-          {noShows.map((r) => renderRow(r, 'warn'))}
         </>
       ) : null}
 
@@ -367,6 +346,53 @@ export default function StaffExceptions() {
         </>
       ) : null}
 
+      {plainNoShows.length > 0 ? (
+        <>
+          <SectionLabel>No-shows</SectionLabel>
+          {plainNoShows.map((r) => renderRow(r, 'warn'))}
+        </>
+      ) : null}
+
+      {/*
+        Messages that never reached anybody. Before this was recorded, a family
+        with no push token simply never heard anything and there was no trace of
+        it — "we notified the parents" was unfalsifiable.
+      */}
+      {undelivered.length > 0 ? (
+        <>
+          <SectionLabel>Messages that were not delivered</SectionLabel>
+          <Card style={styles.warnCard}>
+            <Text style={styles.body}>
+              These people are unreachable by push. Usually it means they have never opened the app
+              on a phone that granted notification permission — so they are only seeing alerts if
+              they happen to open the app.
+            </Text>
+          </Card>
+          {undelivered.map((n) => (
+            <Card key={n.id}>
+              <Row style={styles.between}>
+                <View style={styles.grow}>
+                  <Text style={styles.name}>{nameOf(n.user_id)}</Text>
+                  <Text style={styles.fine}>
+                    “{n.title}” · {new Date(n.created_at).toLocaleString()}
+                  </Text>
+                </View>
+                <Badge
+                  label={n.delivery_state === 'no_token' ? 'No device' : 'Failed'}
+                  tone={n.requires_ack ? 'danger' : 'warn'}
+                />
+              </Row>
+              {n.delivery_detail ? <Text style={styles.fine}>{n.delivery_detail}</Text> : null}
+              {n.requires_ack && !n.acknowledged_at ? (
+                <Text style={styles.urgentBody}>
+                  This one was urgent and has not been acknowledged. Phone them.
+                </Text>
+              ) : null}
+            </Card>
+          ))}
+        </>
+      ) : null}
+
       {incidents.length > 0 ? (
         <>
           <SectionLabel>Open incidents</SectionLabel>
@@ -374,7 +400,10 @@ export default function StaffExceptions() {
             <Card key={i.id}>
               <Row style={styles.between}>
                 <View style={styles.grow}>
-                  <Text style={styles.name}>{i.kind}</Text>
+                  <Text style={styles.name}>
+                    {i.kind}
+                    {i.student_id ? ` · ${nameOf(i.student_id)}` : ''}
+                  </Text>
                   <Text style={styles.fine}>
                     {nameOf(i.driver_id)} · {new Date(i.created_at).toLocaleString()}
                   </Text>
@@ -402,6 +431,7 @@ const styles = StyleSheet.create({
   body: { fontSize: 14, color: theme.muted, lineHeight: 20 },
   fine: { fontSize: 12, color: theme.faint, lineHeight: 17 },
   urgent: { borderColor: theme.danger },
+  warnCard: { borderColor: theme.warn },
   urgentBody: { fontSize: 13, color: theme.danger, lineHeight: 19 },
   textarea: { minHeight: 60, textAlignVertical: 'top', paddingTop: 12 },
 });

@@ -20,7 +20,7 @@ import {
 /** Blueprint §4.2: boarding, delay, approaching, route-change and drop-off messages. */
 export default function ParentAlerts() {
   const { session } = useAuth();
-  const { items, unread, markAllRead } = useNotifications(session?.user.id);
+  const { items, unread, markAllRead, acknowledge } = useNotifications(session?.user.id);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
 
   const load = useCallback(async () => {
@@ -82,6 +82,34 @@ export default function ParentAlerts() {
               />
             </Row>
             <Text style={styles.body}>{n.body}</Text>
+
+            {/*
+              S6: the two urgent kinds are not delivered until a person says
+              they saw them. Push is best-effort — a flat battery, a revoked
+              token, a phone face-down — and for "could not drop off" that is
+              not a delivery mechanism. Silence past a few minutes becomes a
+              watchdog alert to the office, who then phone.
+            */}
+            {n.requires_ack ? (
+              n.acknowledged_at ? (
+                <Text style={styles.fine}>
+                  ✓ You confirmed you saw this at{' '}
+                  {new Date(n.acknowledged_at).toLocaleTimeString([], {
+                    hour: 'numeric',
+                    minute: '2-digit',
+                  })}
+                  .
+                </Text>
+              ) : (
+                <>
+                  <Text style={styles.ackNote}>
+                    The transport office is waiting to hear that you have seen this. If nobody
+                    confirms, they will call.
+                  </Text>
+                  <Button label="I have seen this" onPress={() => acknowledge(n.id)} />
+                </>
+              )
+            ) : null}
           </Card>
         ))
       )}
@@ -94,4 +122,5 @@ const styles = StyleSheet.create({
   title: { fontSize: 15, fontWeight: '700', color: theme.text, flexShrink: 1 },
   body: { fontSize: 14, color: theme.muted, lineHeight: 20 },
   fine: { fontSize: 12, color: theme.faint },
+  ackNote: { fontSize: 13, color: theme.warn, lineHeight: 19 },
 });

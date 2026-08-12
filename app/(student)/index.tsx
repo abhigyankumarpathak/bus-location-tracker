@@ -17,7 +17,6 @@ import {
 } from '../../src/lib/types';
 import type { StudentTripStatus } from '../../src/lib/types';
 import { stopsStillToVisit } from '../../src/lib/eta';
-import { ALERT_MINUTES, scheduleArrivalAlerts } from '../../src/lib/alerts';
 import { BoardingPass } from '../../src/components/BoardingPass';
 import { VanEta } from '../../src/components/VanEta';
 import { GpsDisabled } from '../../src/components/Disabled';
@@ -34,6 +33,7 @@ import {
   Title,
   theme,
 } from '../../src/components/ui';
+import { PushStatus } from '../../src/components/PushStatus';
 
 /**
  * The student's Today screen (blueprint §4.1).
@@ -72,24 +72,14 @@ export default function StudentToday() {
   );
   const { location, stale } = useVehicleLocation(runningTrip?.vehicle_id, gpsEnabled);
 
-  // Blueprint §4.1: alerts 15 and 5 minutes before the van is due. Driven off
-  // the planned arrival time, not GPS — see src/lib/alerts.ts.
-  useEffect(() => {
-    if (ref.loading) return;
-
-    const arrivals = mine
-      .map((row) => {
-        const stop = ref.stops.find((s) => s.id === row.pickup_stop_id);
-        const when = stop?.planned_arrival ?? stop?.planned_departure;
-        const hub = ref.stopName(row.pickup_stop_id);
-        // Nothing to alert on until the office has set a time for this hub.
-        if (!when || !hub) return null;
-        return { id: row.id, hubName: hub, plannedArrival: when };
-      })
-      .filter((a): a is NonNullable<typeof a> => a !== null);
-
-    scheduleArrivalAlerts(arrivals);
-  }, [mine, ref.loading, ref.stops, ref.stopName]);
+  // Blueprint §4.1: alerts 15 and 5 minutes before the van is due.
+  //
+  // These used to be scheduled on the DEVICE from this screen, which meant they
+  // only existed if the app had been opened that day, never worked on web at
+  // all, and re-armed themselves on every render — cancelling every scheduled
+  // notification globally each time. They now come from send_arrival_alerts() on
+  // the server, so they arrive as push and land in the inbox like everything
+  // else. Nothing to do here.
 
   async function checkIn(row: StudentTripStatus) {
     setError('');
@@ -117,6 +107,7 @@ export default function StudentToday() {
     return (
       <Screen>
         <Title sub={profile?.full_name || undefined}>Today</Title>
+        <PushStatus compact />
         {/* Blueprint §4.1: say this plainly rather than showing an empty page. */}
         <Empty>No transportation scheduled today.</Empty>
         <Card>
@@ -131,6 +122,7 @@ export default function StudentToday() {
   return (
     <Screen>
       <Title sub={profile?.full_name || undefined}>Today</Title>
+      <PushStatus compact />
 
       {mine.map((row) => {
         const trip = trips.find((t) => t.id === row.trip_id);
@@ -201,8 +193,7 @@ export default function StudentToday() {
             {/* Blueprint §4.1: alerts 15 and 5 minutes before the van is due. */}
             {stop?.planned_arrival || stop?.planned_departure ? (
               <Text style={styles.fine}>
-                🔔 You will be alerted {ALERT_MINUTES.join(' and ')} minutes before the van is due
-                at {hub}.
+                🔔 You will be alerted 15 and 5 minutes before the van is due at {hub}.
               </Text>
             ) : (
               <Text style={styles.warn}>

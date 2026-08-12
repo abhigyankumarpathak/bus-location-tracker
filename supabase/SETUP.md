@@ -122,18 +122,62 @@ automatically — you do not set those.
 
 Without `admin-unlock` deployed, the staff portal cannot be opened at all.
 
-## 7. Push notifications (optional)
+## 7. Push notifications — **required, not optional**
 
-Alerts already appear in-app. To deliver them when the app is closed:
+Nobody watches the coordinator dashboard during a run (confirmed 12 August), so
+the exception queue is a record, not a delivery mechanism. **Push is the only way
+anyone finds out about anything while it still matters.** All three steps below
+are needed; miss any one and every alert lands in the in-app inbox and nowhere
+else, silently.
 
-**Database → Webhooks → Create a new hook**
+**1. An EAS project id in `app.json`.** This was the actual bug — there was none,
+so `getExpoPushTokenAsync` threw, the error was swallowed, and no device ever
+stored a token.
+
+```jsonc
+// app.json
+"extra": { "eas": { "projectId": "your-project-id-here" } }
+```
+
+Get it with `npx eas init` (or from expo.dev → your project → Project settings).
+`EXPO_PUBLIC_EAS_PROJECT_ID` in `.env` also works and overrides it. **Rebuild
+after changing this** — it is baked into the bundle.
+
+**2. The database webhook.** Database → Webhooks → Create a new hook:
 
 - Table `notifications`, event `Insert`
 - Type: **Supabase Edge Functions** → `send-push`
 - HTTP header: `Authorization: Bearer <your service role key>`
 
-That header is how `send-push` knows the request came from your database. Push
-also needs an EAS project and a physical device — the simulator cannot receive it.
+That header is how `send-push` knows the request came from your database.
+
+**3. A development build on a real phone.** Push has not worked in Expo Go since
+SDK 53, and simulators cannot receive it at all. `npx expo run:ios` /
+`npx expo run:android`.
+
+### Checking it actually works
+
+The app tells you now instead of failing quietly. A student, parent or driver
+whose device cannot receive push sees a banner on their main screen saying which
+of the three things is wrong.
+
+From the office: **Exceptions → “Messages that were not delivered”** lists
+everyone the push path could not reach in the last week, and why. `no_token`
+means that person has never opened the app on a phone that granted permission.
+
+If a notification row's `delivery_state` stays `pending` for ever, step 2 is the
+missing one — nothing is calling `send-push` at all.
+
+### What rings, and what does not
+
+Three Android channels, so a family can mute the routine pings without also
+muting the one that matters:
+
+| Channel | Used for | Behaviour |
+| --- | --- | --- |
+| `urgent` | Could not drop off; no-show after a check-in | Max importance, sound, vibrate, and `time-sensitive` on iOS so a Focus mode does not silence it |
+| `arrivals` | The 15- and 5-minute “your van is due” alerts | High importance with sound — time-critical, because an alert that arrives after the van has gone is worse than none |
+| `default` | Boarding, drop-off, delays, announcements | Normal |
 
 ## 8. Weekly report + purge (keeps the database small)
 
@@ -217,6 +261,53 @@ select cron.schedule(
 ```
 
 It is idempotent — running it twice creates nothing extra.
+
+## 10. The watchdog, and arrival alerts (strongly recommended)
+
+Everything else in this system escalates because a **driver tapped something**.
+If the phone dies, is pocketed, or the driver simply stops tapping, the trip
+stays open for ever and nobody is told anything. The watchdog is the only thing
+that watches the clock instead.
+
+Both switches live in the app: **Setup → Watchdog**. They need `pg_cron`
+(Database → Extensions), and the switches say so plainly if it is missing.
+
+- **Check every five minutes** — `transport_watchdog()`, 06:00–19:59 Mon–Fri.
+  Raises a route that never started, a van overdue at a stop, a child still
+  waiting at a hub, a trip that never ended, a child still aboard after the last
+  stop, and an urgent message nobody has acknowledged. Each breach alerts
+  **once**, and clears itself when the condition goes away.
+- **Send arrival alerts** — `send_arrival_alerts()`, every two minutes in the
+  same window. This is the “your van is due in 15 minutes” message. Two minutes
+  rather than five because the 5-minute milestone needs the resolution.
+
+Operating hours only, deliberately: a watchdog that wakes someone at 3am about a
+route nobody was running is a watchdog that gets muted, and then the real ones
+stop being read too.
+
+By hand, if you prefer:
+
+```sql
+select cron.schedule('transport-watchdog', '*/5 6-19 * * 1-5',
+                     $$ select transport_watchdog() $$);
+select cron.schedule('arrival-alerts',     '*/2 6-19 * * 1-5',
+                     $$ select send_arrival_alerts() $$);
+```
+
+With cron off, both still work — the office presses **Check for anything
+unreported** on the Exceptions tab. But “someone remembers to press it” is not a
+safety net.
+
+## 11. Applying schema changes to a live database
+
+`supabase/schema.sql` is the canonical definition and **drops every table** at
+the top, so re-running it on a database with real trips in it destroys them.
+
+`supabase/patches/` holds the same changes as `alter` statements, safe to run on
+live data and idempotent. Run them in filename order:
+
+1. `2026-08-12-c4-c1-s9.sql`
+2. `2026-08-12b-c2-c5-c6-c7-c8-and-the-s-n-series.sql`
 
 ---
 

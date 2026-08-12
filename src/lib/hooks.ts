@@ -348,7 +348,33 @@ export function useNotifications(userId: string | null | undefined) {
     await reload();
   }, [userId, reload]);
 
-  return { items, unread: items.filter((n) => !n.read_at).length, markAllRead, reload };
+  /**
+   * Say a person has actually seen an urgent message (S6).
+   *
+   * Distinct from `read_at`, which the inbox sets in bulk and which therefore
+   * proves nothing. This is a deliberate tap on one message, and the watchdog
+   * escalates to the office when it does not arrive.
+   */
+  const acknowledge = useCallback(
+    async (id: string) => {
+      if (!userId) return;
+      await supabase
+        .from('notifications')
+        .update({ acknowledged_at: new Date().toISOString(), acknowledged_by: userId })
+        .eq('id', id);
+      await reload();
+    },
+    [userId, reload],
+  );
+
+  return {
+    items,
+    unread: items.filter((n) => !n.read_at).length,
+    unacknowledged: items.filter((n) => n.requires_ack && !n.acknowledged_at).length,
+    markAllRead,
+    acknowledge,
+    reload,
+  };
 }
 
 /** People this parent is linked to (accepted links only). */
@@ -388,7 +414,12 @@ export function useMyChildren() {
  * Ideally a nightly pg_cron job does this (see SETUP.md); calling it here as
  * well means the pilot works even if cron was never enabled. It is idempotent,
  * so calling it twice costs nothing.
+ *
+ * Calls the TODAY-ONLY wrapper on purpose. `ensure_daily_trips(date)` takes an
+ * arbitrary date and is `security definer`, so it is staff-and-cron only — any
+ * signed-in student used to be able to materialise trip rows for any date they
+ * liked.
  */
-export async function ensureTodaysTrips(date: string = today()) {
-  await supabase.rpc('ensure_daily_trips', { target_date: date });
+export async function ensureTodaysTrips() {
+  await supabase.rpc('ensure_todays_trips');
 }

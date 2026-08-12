@@ -15,6 +15,283 @@ Newest first.
 
 ---
 
+## 12 August 2026
+
+### Push notifications that actually arrive, and a real split between “wrong” and “happened”
+
+Prompted by two answers to the plan's open questions: **nobody watches the
+coordinator dashboard during a run**, and **drivers use personal phones**.
+Together those mean the exception queue is a record rather than a delivery
+mechanism, and the office finds out about a problem only if a notification
+reaches a device nobody controls the settings of.
+
+**Push was silently dead. The cause was one missing line.**
+
+- `app.json` had no `extra.eas.projectId`, so `getExpoPushTokenAsync()` threw on
+  every launch, a bare `catch` swallowed it, `registerForPush` returned `null`,
+  and **no device ever stored a push token**. Every notification the system has
+  ever generated went to the in-app inbox and nowhere else.
+- Nothing anywhere reported this. Not the user, not the office, not a log.
+- `registerForPush` now returns a typed reason instead of `null`, and a
+  `<PushStatus/>` banner on the student, parent and driver home screens says
+  which of the three requirements is missing — in words the person reading it
+  can act on. It says nothing at all when push is working.
+
+**Arrival alerts now ring.**
+
+- `send-push` sent `sound: null` and `priority: 'normal'` for everything except
+  emergencies — so “your van is due in 15 minutes”, whose entire job is *start
+  walking now*, arrived as a silent banner on a phone in a pocket. Arrival and
+  delay alerts are now sound + high priority: not urgent, but **time-critical**,
+  and one that lands after the van has gone is worse than none.
+- Urgent kinds get `interruptionLevel: 'time-sensitive'` on iOS, so a Focus mode
+  cannot silence “could not drop off” — exactly when someone most needs
+  interrupting.
+
+**Three Android notification channels instead of one.**
+
+`urgent`, `arrivals` and `default`. One channel for everything means a family
+who mutes the routine pings also mutes the child-unaccounted-for one. `send-push`
+routes each message to the right channel by kind.
+
+**Tapping a notification goes somewhere.** A response listener routes to the
+inbox (where urgent messages can be acknowledged) or to the driver's run.
+Previously a push just reopened the app wherever it was last left.
+
+**The staff Exceptions tab is now two tabs.**
+
+It had become one scroll containing emergencies, routine approvals and a
+notification feed — which meant the emergencies got scrolled past.
+
+- **Exceptions** — only what is *wrong*, ordered by how bad it is if nobody
+  looks: a child still on a van, a child who checked in and was then not picked
+  up, what the watchdog noticed that no human reported, students with no outcome,
+  no-shows, **messages that were not delivered**, and open incidents.
+- **Notifications** — the stream: the office's own feed, plus approvals waiting
+  on a decision, plus announcements already sent. Nothing here means anything is
+  broken.
+
+Exceptions sits first in the tab bar, because a stream can wait.
+
+**Also:** the seven open questions in the remediation plan now have six answers
+recorded in [docs/REMEDIATION.md](docs/REMEDIATION.md), with what each one
+changes about the build. The one still open — the jurisdiction's record-keeping
+requirement for child transport custody — is flagged as a live risk against the
+weekly purge, which currently deletes routine ride detail after three weeks.
+
+### The rest of the remediation plan — everything except C3
+
+Twenty-one of the review's twenty-two findings are now closed. Applied as
+`supabase/patches/2026-08-12b-c2-c5-c6-c7-c8-and-the-s-n-series.sql` and folded
+into `schema.sql`. Both files were loaded into a real Postgres and exercised
+against seeded trips; the patch was also tested as an upgrade from the previous
+released schema, twice, to confirm it is idempotent.
+
+**C2 — the watchdog. The only thing here that watches the clock.**
+
+- Every other escalation in this system fires because a driver tapped something.
+  If the phone dies, is pocketed, or the driver stops tapping, the trip stayed
+  `active` for ever and **nobody was told anything**.
+- `transport_watchdog()` runs every five minutes during operating hours (pg_cron,
+  switch in Setup → Watchdog) and raises six things: a route that never started,
+  a van overdue at a stop, a child still `waiting` at a hub, a trip running past
+  any plausible maximum, a child still aboard after the van reached its last
+  stop, and an urgent notification nobody has acknowledged.
+- Each breach alerts **once** — an expression index does the deduplication,
+  because a plain unique constraint treats NULLs as distinct and would have
+  re-raised every single pass.
+- Alerts **clear themselves** when the condition goes away. A queue full of
+  resolved-in-reality alerts is a queue nobody reads.
+- Thresholds live on `organization`, adjustable in Setup. A rural route with a
+  forty-minute gap between hubs needs different patience from a town run.
+- Open alerts sit at the **top** of the coordinator's exception queue, above
+  everything a human reported, because they are the only items there that arrived
+  without a human noticing first.
+
+**C5 — undo, and a correction path that does not need an admin**
+
+- A mistapped `no_show` was terminal: the card rendered with no actions and the
+  only way out was a coordinator, mid-route, from a desk.
+- `undo_rider_status()` and `undo_stop_progress()` read the previous state out of
+  the audit log and write a **compensating** entry — the log reads "this
+  happened, then it was taken back" rather than quietly ceasing to mention it.
+- The buttons appear for 90 seconds and then disappear on their own, because
+  offering an undo the database will refuse is worse than not offering one.
+- Undoing a departure also puts everyone it promoted back to `boarded`.
+- Staff RLS on `trip_stop_progress` widened from `for select` to `for all`. A
+  coordinator genuinely could not fix a mistapped departure at all before this;
+  the only tool was `rerun_trip`, which is admin-only and wipes the whole trip.
+
+**C8 — what may follow what**
+
+- RLS checked who may write which status and never what may follow what, so a raw
+  call with a driver's token could move a rider `scheduled → dropped_off`. The UI
+  was the only thing preventing it, which contradicted the README's claim that
+  these are database rules.
+- `guard_rider_transition()` holds the table; anything not in it is refused. It is
+  written down in [docs/FEATURES.md](docs/FEATURES.md).
+- Staff stay exempt (§2.1 already demands a reason from them), and so does an
+  explicit undo — a compensating action is not a forward move, and enumerating
+  every reverse edge would have doubled the table and turned it into noise.
+
+**C6 + S1 + S7 + N1 — one pass over the notification path**
+
+- Arrival alerts were **local notifications scheduled on the device**, which
+  failed four ways at once and none of them observably: they only existed if the
+  app had been opened that day; web got nothing; the scheduling effect re-ran on
+  every render, calling `cancelAllScheduledNotificationsAsync()` globally each
+  time; and away students were alerted anyway.
+- `send_arrival_alerts()` now inserts `notifications` rows from cron. That buys
+  push, the in-app inbox, web, and a queryable record. `src/lib/alerts.ts` is
+  deleted.
+- **S1:** `delay_minutes` and `delay_reason` have been on `daily_trips` since the
+  first schema and nothing ever wrote them. `report_delay()` gives the driver
+  +10/+15/+30, shifts every remaining planned time, tells each family the new time
+  **for their own stop**, and re-arms the shifted alerts.
+- **S7:** guardians are told when the van leaves their child's hub — the parent's
+  most-asked question, previously answerable only by opening the app.
+- **N1:** a parent with two children at one hub gets **one** message naming both,
+  for arrival alerts and departure alerts alike.
+
+**C7 — manual mode catches up with scan mode**
+
+- `find_rider_today()`: the driver types a name and learns whose van that child
+  belongs on. Without it, a child on the wrong van was invisible to everybody —
+  RLS means driver B cannot see student X, so they were a no-show on one van and
+  did not exist on the other.
+- It returns the narrowest possible answer: a name, a route, a driver, a hub. No
+  contact details, no address.
+- `board_at_other_stop()`: a child at the wrong hub on the *right* van used to be
+  unboardable — the scanner refused and the manual buttons live on a card that
+  only renders under their own stop. Now it records what actually happened.
+- `move_rider_to_trip()` is staff-only. Which van carries which child is the
+  office's call, not something a driver should be able to change quietly.
+
+**The S and N series**
+
+- **S2** — a `no_show` after a check-in now escalates differently from one out of
+  nothing. The first means the child said they were there and then were not picked
+  up; it gets its own urgent wording and its own section in the exception queue.
+- **S4** — the cutoff was a wall clock when what matters is the trip boundary.
+  Between 06:30 and the van pulling away an absence sat `pending`, so the driver
+  waited for a child who was never coming and then filed a no-show that alarmed
+  everyone. Now auto-approved any time before that child's trip actually starts,
+  hard-frozen once it has.
+- **S5** — roster generation added but never removed, so a student taken off a
+  route stayed on today's trip and blocked the driver from ending it. `scheduled`
+  rows with no matching assignment are deleted; anything further along is a real
+  record of a real child and is never touched.
+- **S6** — push had no delivery record at all: a user with no token produced no
+  row, no retry and no trace, so "we sent it" was unfalsifiable. Every outcome is
+  now recorded on the notification. The two urgent kinds require a person to
+  acknowledge them, and the watchdog escalates silence to the office.
+- **S8** — `ensure_daily_trips` was `security definer` and executable by every
+  authenticated user, so any student could materialise trip rows for an arbitrary
+  date. Revoked; `ensure_todays_trips()` is the narrow wrapper the apps call.
+- **N2** — `checkin_window_min` had nothing behind it. A student could check in at
+  3am and the driver would find a `waiting` flag eight hours stale. Enforced in the
+  student's RLS policy.
+- **N3** — the audit log has a viewer (the History tab), with filters and search.
+  Read-only by construction: no policy on that table lets anyone write to it.
+- **N4** — cutoff times and the check-in window are in Setup, done after S4 as the
+  plan instructed, with copy that explains what they now mean.
+- **N5** — announcements were fanned out **from the client** to every active
+  student, parent and driver regardless of who the message was about. Moved into a
+  trigger that respects `route_id`, so "Route 2 is delayed" no longer wakes every
+  family on every other van.
+
+**Found while doing the above**
+
+- `select coalesce(…) into` does nothing when the select matches no row, leaving
+  the variable NULL — which nulled an entire incident description via `||`. Fixed
+  in two places.
+- The watchdog would have raised a false alarm on **every afternoon run**: the
+  school is the origin of an afternoon route, which the driver never marks an
+  arrival at. That is the fastest way to teach a coordinator to ignore alerts.
+- Grammar: "Arun and Priya **has** left Oak Road" once the names were collapsed.
+
+**Still open: C3, the offline queue.** Deliberately. The plan sequences it last
+"once the safety work is not waiting on it", which is now true — and with the
+watchdog in place a driver who goes silent in a dead zone is at least *noticed*.
+It is the one item the plan calls a genuine project, and an outbox with wrong
+ordering or idempotency rules is worse than none in an app about where children
+are.
+
+### Phase 1 of the remediation plan: C4, C1 and S9
+
+Three items from [docs/REMEDIATION.md](docs/REMEDIATION.md), in the order that
+document sequences them. All three are cases where a child could end up on, or
+off, a van with nobody told.
+
+**C4 — a student marked absent who turns up can now be boarded**
+
+- `absent`, `parent_pickup` and `no_show` are all final, so the driver saw **no
+  buttons** for a child standing in front of them. The only way out was a
+  coordinator override, mid-route, from a desk. What actually happened is that
+  the driver took the child — of course they did — and the record said the van
+  was not carrying a child it was carrying.
+- New **“Boarding anyway — turned up”** on any away status, at that student's
+  pickup stop. A note is required.
+- The note is required by the **database**, not just the screen:
+  `guard_boarding_after_away()` refuses the write without one. It lands in
+  `audit_logs.reason` and in the notification body.
+- Guardians *and* the coordinator are told, in different words from a routine
+  boarding (“Priya boarded after being recorded as absent”), under a distinct
+  notification kind `boarded_after_away`. The office is holding the absence
+  request this just contradicted.
+- The scanner now points at this button instead of saying “use the roster”.
+
+**C1 — departing a stop with somebody unaccounted for**
+
+- `markDeparted` promoted only `boarded` riders. A student who tapped *“I'm at
+  the hub”* and was never boarded stayed `waiting` while the van pulled away, and
+  **nothing fired** — the catch was End trip, potentially forty minutes and eight
+  stops later.
+- The question End trip asks is now asked at every departure, where the van is
+  still at the kerb. `guard_stop_departure()` refuses the write; the app holds it
+  first and lists exactly who, with Boarded / No-show / Absent (or Dropped off /
+  Unable to drop off) **inline**, rather than sending the driver back up the
+  screen.
+- The driver is never stuck. `departed_with_unresolved` leaves anyway — a van
+  that cannot move is its own safety problem. It just stops being free:
+  `record_forced_departure()` files an incident **per child** and their guardians
+  and the office are notified immediately.
+- `riders_unresolved_at_stop()` holds the rule once, for the guard and the
+  incident recorder; `unresolvedAtStop()` in `src/lib/types.ts` mirrors it so the
+  warning names the same people the database would refuse on.
+
+**S9 — stop-progress integrity**
+
+- `check (departed_at >= arrived_at)`, with the trigger raising a readable
+  sentence before the constraint name ever reaches the driver.
+- A second **Arrived** tap no longer moves the recorded time. Staff still can —
+  that correction path is C5 — but the driver's app cannot overwrite its own
+  history.
+- Explicit `skipped` boolean instead of inferring “skipped” from a null arrival.
+  “Deliberately skipped” and “the arrival was never recorded” are different facts
+  about a child.
+
+**Two things found while doing it**
+
+- `notify_on_incident()` broadcast every incident's description to every guardian
+  on the route. With C1 filing per-child incidents that would have told every
+  family who was left behind, by name. An incident carrying a `student_id` now
+  goes to that student's guardians only; coordinators still get everything.
+- `schema.sql` could not be re-run: `trip_stop_progress` and
+  `assignment_requests` were missing from the drop list at the top, so they
+  survived the drop with their old columns and the create failed halfway through.
+  Both added.
+
+**Applying it**
+
+`supabase/schema.sql` is canonical but destructive.
+`supabase/patches/2026-08-12-c4-c1-s9.sql` is the same change as alters, safe on
+a live database. Both were loaded into a real Postgres and exercised — refusal,
+override, notification routing, audit reason, and the staff-vs-driver correction
+paths.
+
+---
+
 ## 10 August 2026
 
 ### 17:09 · `438cb70` — Turn on QR boarding and the live map, add holiday absences, batch the school drop-off

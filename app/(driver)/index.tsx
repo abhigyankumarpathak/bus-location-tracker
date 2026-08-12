@@ -17,6 +17,7 @@ import {
   Title,
   theme,
 } from '../../src/components/ui';
+import { PushStatus } from '../../src/components/PushStatus';
 
 /**
  * Today's Trips (blueprint §5.1).
@@ -57,6 +58,8 @@ export default function DriverToday() {
   return (
     <Screen>
       <Title sub={profile?.full_name || undefined}>Today's trips</Title>
+
+      <PushStatus compact />
 
       {trips.length === 0 ? (
         <>

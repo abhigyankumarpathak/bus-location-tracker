@@ -11,7 +11,10 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.thecoder12321.bus-tracking-app",
       "infoPlist": {
-        "UIBackgroundModes": ["location", "fetch"]
+        "UIBackgroundModes": [
+          "location",
+          "fetch"
+        ]
       }
     },
     "android": {
@@ -51,9 +54,16 @@
       [
         "expo-notifications",
         {
-          "color": "#38BDF8"
+          "color": "#38BDF8",
+          "defaultChannel": "default",
+          "enableBackgroundRemoteNotifications": false
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "REPLACE-WITH-YOUR-EAS-PROJECT-ID"
+      }
+    }
   }
 }

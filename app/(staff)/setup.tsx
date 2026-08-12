@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { useAuth } from '../../src/lib/auth';
@@ -31,7 +31,7 @@ import {
   theme,
 } from '../../src/components/ui';
 
-type Tab = 'routes' | 'hubs' | 'fleet' | 'data' | 'features';
+type Tab = 'routes' | 'hubs' | 'fleet' | 'watchdog' | 'data' | 'features';
 
 interface MaintenanceResult {
   reports_generated?: number;
@@ -47,6 +47,62 @@ interface ScheduleStatus {
   schedule?: string;
   hint?: string;
 }
+
+/**
+ * The watchdog's thresholds, as the office thinks about them.
+ *
+ * `key` is the organization column, `alertKey` the matching count in the jsonb
+ * that transport_watchdog() returns — kept side by side so the "last check"
+ * summary and the settings cannot drift apart.
+ */
+const WATCHDOG_THRESHOLDS: {
+  key:
+    | 'watchdog_trip_start_min'
+    | 'watchdog_stop_arrival_min'
+    | 'watchdog_waiting_min'
+    | 'watchdog_trip_max_min'
+    | 'watchdog_onboard_min';
+  alertKey: string;
+  label: string;
+  help: string;
+  choices: number[];
+}[] = [
+  {
+    key: 'watchdog_trip_start_min',
+    alertKey: 'trip_not_started',
+    label: 'Route not started',
+    help: 'How long past the first stop’s planned departure before an untouched trip is raised.',
+    choices: [5, 10, 15, 30],
+  },
+  {
+    key: 'watchdog_stop_arrival_min',
+    alertKey: 'stop_not_reached',
+    label: 'Van overdue at a stop',
+    help: 'How late a stop with riders on it can be before the office is told. Traffic is normal; twenty minutes of silence is not.',
+    choices: [10, 15, 20, 30],
+  },
+  {
+    key: 'watchdog_waiting_min',
+    alertKey: 'rider_waiting',
+    label: 'Student still waiting',
+    help: 'A child tapped “I’m at the hub” and has not been boarded since. The app knows they are stood outside.',
+    choices: [10, 15, 20, 30],
+  },
+  {
+    key: 'watchdog_trip_max_min',
+    alertKey: 'trip_overrunning',
+    label: 'Trip never ended',
+    help: 'Longer than any real route takes. This is the pocketed phone, or the driver who forgot to press End trip.',
+    choices: [90, 120, 150, 180],
+  },
+  {
+    key: 'watchdog_onboard_min',
+    alertKey: 'rider_still_onboard',
+    label: 'Student still on board',
+    help: 'The van reached its last stop and somebody is still recorded as being in it.',
+    choices: [10, 15, 20, 30],
+  },
+];
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const ROUTE_TYPES: RouteType[] = ['morning', 'afternoon', 'club', 'emergency'];
@@ -111,6 +167,19 @@ export default function StaffSetup() {
   const [vanPlate, setVanPlate] = useState('');
   const [vanCap, setVanCap] = useState('16');
 
+  // Change deadlines (N4). Held as text so a half-typed time is not rejected
+  // mid-keystroke; validated on save.
+  const [morningCutoff, setMorningCutoff] = useState('');
+  const [afternoonCutoff, setAfternoonCutoff] = useState('');
+
+  // The watchdog
+  const [wdSchedule, setWdSchedule] = useState<ScheduleStatus | null>(null);
+  const [wdScheduling, setWdScheduling] = useState(false);
+  const [wdRunning, setWdRunning] = useState(false);
+  const [wdLastRun, setWdLastRun] = useState<Record<string, unknown> | null>(null);
+  const [arrivalSchedule, setArrivalSchedule] = useState<ScheduleStatus | null>(null);
+  const [arrivalScheduling, setArrivalScheduling] = useState(false);
+
   // Weekly archive + purge
   const [maintaining, setMaintaining] = useState(false);
   const [lastRun, setLastRun] = useState<MaintenanceResult | null>(null);
@@ -141,6 +210,12 @@ export default function StaffSetup() {
     // tab says so rather than looking broken.
     const { data: sched } = await supabase.rpc('weekly_schedule_status');
     setSchedule((sched as ScheduleStatus) ?? null);
+
+    const { data: wd } = await supabase.rpc('watchdog_schedule_status');
+    setWdSchedule((wd as ScheduleStatus) ?? null);
+
+    const { data: arr } = await supabase.rpc('arrival_schedule_status');
+    setArrivalSchedule((arr as ScheduleStatus) ?? null);
   }, []);
 
   // Same reason as the People tab: tabs stay mounted, so loading once on mount
@@ -151,6 +226,13 @@ export default function StaffSetup() {
       load();
     }, [load]),
   );
+
+  // Prefill the deadline boxes once the org settings arrive.
+  useEffect(() => {
+    if (!org) return;
+    setMorningCutoff(org.morning_cutoff.slice(0, 5));
+    setAfternoonCutoff(org.afternoon_cutoff.slice(0, 5));
+  }, [org?.morning_cutoff, org?.afternoon_cutoff]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refreshAll = useCallback(async () => {
     await Promise.all([ref.reload(), load()]);
@@ -424,11 +506,100 @@ export default function StaffSetup() {
     payments_enabled?: boolean;
     retention_weeks?: number;
     attendance_mode?: 'manual' | 'scan';
+    morning_cutoff?: string;
+    afternoon_cutoff?: string;
+    checkin_window_min?: number;
+    watchdog_enabled?: boolean;
+    watchdog_trip_start_min?: number;
+    watchdog_stop_arrival_min?: number;
+    watchdog_waiting_min?: number;
+    watchdog_trip_max_min?: number;
+    watchdog_onboard_min?: number;
   }) {
     setError('');
     const { error: e } = await supabase.from('organization').update(patch).eq('id', 1);
     if (e) return setError(staffError(e));
     await reloadOrg();
+  }
+
+  /** Times only, and both at once — they are read as a pair everywhere. */
+  async function saveCutoffs() {
+    const ok = /^([01]?\d|2[0-3]):[0-5]\d$/;
+    if (!ok.test(morningCutoff.trim()) || !ok.test(afternoonCutoff.trim())) {
+      setError('Deadlines must look like 06:30.');
+      return;
+    }
+    await setFlag({
+      morning_cutoff: morningCutoff.trim(),
+      afternoon_cutoff: afternoonCutoff.trim(),
+    });
+  }
+
+  /**
+   * Turn the watchdog's five-minute sweep on or off.
+   *
+   * Unlike the purge switch this is a COORDINATOR's call, not an admin's —
+   * scheduling a job that deletes data is a different kind of decision from
+   * scheduling one that notices a child is still stood at a hub.
+   */
+  async function toggleWatchdogSchedule(enable: boolean) {
+    setError('');
+    setWdScheduling(true);
+
+    const { data, error: e } = await supabase.rpc('set_watchdog_schedule', { enable });
+
+    setWdScheduling(false);
+
+    if (e) {
+      setError(
+        e.message.includes('function') && e.message.includes('does not exist')
+          ? 'The watchdog is not installed. Run supabase/schema.sql (or the latest patch) in the SQL Editor.'
+          : e.message,
+      );
+      return;
+    }
+
+    setWdSchedule(data as ScheduleStatus);
+
+    Alert.alert(
+      enable ? 'Watchdog scheduled' : 'Watchdog stopped',
+      enable
+        ? 'It checks every five minutes during operating hours and raises anything nobody has reported — a route that never started, a van overdue at a stop, a child still waiting.'
+        : 'Nothing watches the clock now. Everything still depends on a driver tapping something.',
+    );
+  }
+
+  async function toggleArrivalSchedule(enable: boolean) {
+    setError('');
+    setArrivalScheduling(true);
+    const { data, error: e } = await supabase.rpc('set_arrival_schedule', { enable });
+    setArrivalScheduling(false);
+    if (e) {
+      setError(
+        e.message.includes('function') && e.message.includes('does not exist')
+          ? 'Arrival alerts are not installed. Run supabase/schema.sql in the SQL Editor.'
+          : e.message,
+      );
+      return;
+    }
+    setArrivalSchedule(data as ScheduleStatus);
+  }
+
+  /** Run the sweep now rather than waiting for the next five-minute tick. */
+  async function runWatchdogNow() {
+    setError('');
+    setWdRunning(true);
+    const { data, error: e } = await supabase.rpc('transport_watchdog');
+    setWdRunning(false);
+    if (e) {
+      setError(
+        e.message.includes('function')
+          ? 'The watchdog is not installed. Run supabase/schema.sql in the SQL Editor.'
+          : staffError(e),
+      );
+      return;
+    }
+    setWdLastRun((data as Record<string, unknown>) ?? null);
   }
 
   /**
@@ -515,6 +686,7 @@ export default function StaffSetup() {
     { value: 'routes', label: 'Routes' },
     { value: 'hubs', label: 'Hubs' },
     { value: 'fleet', label: 'Fleet' },
+    { value: 'watchdog', label: 'Watchdog' },
     { value: 'data', label: 'Data' },
     { value: 'features', label: 'Features' },
   ];
@@ -1179,6 +1351,154 @@ export default function StaffSetup() {
       ) : null}
 
       {/* -------------------------------------------------------------- DATA */}
+      {/* --------------------------------------------------------- WATCHDOG */}
+      {tab === 'watchdog' ? (
+        <>
+          <Card>
+            <Text style={styles.body}>
+              Everything else in this system escalates because a driver tapped something. If the
+              phone dies, is pocketed, or the driver simply stops tapping, the trip stays open for
+              ever and nobody is told anything.
+            </Text>
+            <Text style={styles.fine}>
+              The watchdog is the one thing that watches the clock instead. It raises each breach
+              once — never every five minutes — and clears itself when the problem goes away.
+            </Text>
+          </Card>
+
+          <Card>
+            <Row style={styles.between}>
+              <View style={styles.grow}>
+                <Text style={styles.name}>Watchdog enabled</Text>
+                <Text style={styles.fine}>
+                  {org?.watchdog_enabled
+                    ? 'Breaches are raised to the exception queue and to every coordinator.'
+                    : 'Off. Nothing is being checked, even if the sweep below is scheduled.'}
+                </Text>
+              </View>
+              <Switch
+                value={org?.watchdog_enabled ?? false}
+                onValueChange={(v) => setFlag({ watchdog_enabled: v })}
+              />
+            </Row>
+          </Card>
+
+          <SectionLabel>Automatic sweep</SectionLabel>
+          <Card>
+            <Row style={styles.between}>
+              <View style={styles.grow}>
+                <Text style={styles.name}>Check every five minutes</Text>
+                <Text style={styles.fine}>
+                  {wdSchedule?.enabled
+                    ? 'Running 06:00–19:59, Monday to Friday.'
+                    : 'Off. Nothing is checked unless someone presses the button below.'}
+                </Text>
+              </View>
+              <Switch
+                value={wdSchedule?.enabled ?? false}
+                disabled={!wdSchedule?.installed || wdScheduling}
+                onValueChange={toggleWatchdogSchedule}
+              />
+            </Row>
+
+            {wdSchedule && !wdSchedule.installed ? (
+              <Text style={styles.warn}>
+                ⚠ {wdSchedule.hint ?? 'pg_cron is not enabled on this project.'}
+              </Text>
+            ) : null}
+
+            <Text style={styles.fine}>
+              Operating hours only, on purpose. A watchdog that wakes someone at 3am about a route
+              nobody was running is a watchdog that gets muted.
+            </Text>
+          </Card>
+
+          <SectionLabel>“Your van is nearly here”</SectionLabel>
+          <Card>
+            <Row style={styles.between}>
+              <View style={styles.grow}>
+                <Text style={styles.name}>Send arrival alerts</Text>
+                <Text style={styles.fine}>
+                  {arrivalSchedule?.enabled
+                    ? 'Families are told 15 and 5 minutes before their van is due.'
+                    : 'Off. Nobody is being told their van is nearly here.'}
+                </Text>
+              </View>
+              <Switch
+                value={arrivalSchedule?.enabled ?? false}
+                disabled={!arrivalSchedule?.installed || arrivalScheduling}
+                onValueChange={toggleArrivalSchedule}
+              />
+            </Row>
+            {arrivalSchedule && !arrivalSchedule.installed ? (
+              <Text style={styles.warn}>
+                ⚠ {arrivalSchedule.hint ?? 'pg_cron is not enabled on this project.'}
+              </Text>
+            ) : null}
+            <Text style={styles.fine}>
+              These used to be scheduled on each family’s phone, which meant they only existed if
+              the app had been opened that day and never worked on the web at all. Sent from the
+              server now, so they arrive as push and land in the inbox. A reported delay shifts
+              them.
+            </Text>
+          </Card>
+
+          <SectionLabel>Check now</SectionLabel>
+          <Card>
+            <Text style={styles.fine}>
+              Does exactly what the scheduled sweep does, immediately. Safe to press repeatedly —
+              anything already raised is not raised again.
+            </Text>
+            <Button label="Check for anything unreported" onPress={runWatchdogNow} loading={wdRunning} />
+            {wdLastRun ? (
+              <View style={styles.panel}>
+                <Text style={styles.name}>Last check</Text>
+                {wdLastRun.ran === false ? (
+                  <Text style={styles.fine}>{String(wdLastRun.reason ?? 'Did not run.')}</Text>
+                ) : (
+                  <>
+                    {WATCHDOG_THRESHOLDS.map((t) => (
+                      <Text key={t.key} style={styles.fine}>
+                        • {Number(wdLastRun[t.alertKey] ?? 0)} × {t.label.toLowerCase()}
+                      </Text>
+                    ))}
+                    <Text style={styles.fine}>
+                      {Number(wdLastRun.cleared ?? 0)} alert(s) cleared themselves.
+                    </Text>
+                  </>
+                )}
+              </View>
+            ) : null}
+          </Card>
+
+          <SectionLabel>How patient to be</SectionLabel>
+          <Card>
+            <Text style={styles.fine}>
+              These are operational numbers, not engineering ones. A rural route with a forty-minute
+              gap between hubs needs more patience than a town run — and finding that out should not
+              need a developer.
+            </Text>
+          </Card>
+
+          {WATCHDOG_THRESHOLDS.map((t) => (
+            <Card key={t.key}>
+              <Text style={styles.name}>{t.label}</Text>
+              <Text style={styles.fine}>{t.help}</Text>
+              <Row style={styles.wrap}>
+                {t.choices.map((n) => (
+                  <Button
+                    key={n}
+                    label={`${n} min`}
+                    variant={org?.[t.key] === n ? 'primary' : 'secondary'}
+                    onPress={() => setFlag({ [t.key]: n })}
+                  />
+                ))}
+              </Row>
+            </Card>
+          ))}
+        </>
+      ) : null}
+
       {tab === 'data' ? (
         <>
           <Card>
@@ -1319,6 +1639,68 @@ export default function StaffSetup() {
               Two features are fully built but switched off, because the MVP blueprint excludes them
               from the first release. Nothing was cut — these flip them on.
             </Text>
+          </Card>
+
+          {/*
+            N4: these were SQL-only until now. Deliberately placed after the
+            watchdog work, because S4 changed what they mean — the cutoff is no
+            longer the thing that decides whether an absence is automatic.
+          */}
+          <SectionLabel>Change deadlines</SectionLabel>
+          <Card>
+            <Text style={styles.fine}>
+              An absence or pickup change is now approved automatically any time before that
+              child’s van actually starts its trip — not at a wall-clock time. Once the van is out,
+              it needs a coordinator, because the driver is already working from the roster as it
+              stands.
+            </Text>
+            <Text style={styles.fine}>
+              These times still set the deadline shown to families, and still govern club changes.
+            </Text>
+            <Row style={styles.wrap}>
+              <View style={styles.grow}>
+                <Field
+                  label="Morning deadline"
+                  value={morningCutoff}
+                  onChangeText={setMorningCutoff}
+                  placeholder="06:30"
+                  autoCapitalize="none"
+                />
+              </View>
+              <View style={styles.grow}>
+                <Field
+                  label="Afternoon deadline"
+                  value={afternoonCutoff}
+                  onChangeText={setAfternoonCutoff}
+                  placeholder="13:30"
+                  autoCapitalize="none"
+                />
+              </View>
+            </Row>
+            <Button label="Save deadlines" onPress={saveCutoffs} disabled={!isAdmin} />
+            {!isAdmin ? (
+              <Text style={styles.fine}>Only an administrator can change these.</Text>
+            ) : null}
+          </Card>
+
+          <SectionLabel>Check-in window</SectionLabel>
+          <Card>
+            <Text style={styles.fine}>
+              How long before their van is due a student may tap “I’m at the hub”. Enforced by the
+              database, not the app — without it a student could check in at 3am and the driver
+              would arrive to a flag set eight hours earlier.
+            </Text>
+            <Row style={styles.wrap}>
+              {[15, 30, 45, 60, 90].map((m) => (
+                <Button
+                  key={m}
+                  label={`${m} min`}
+                  variant={org?.checkin_window_min === m ? 'primary' : 'secondary'}
+                  disabled={!isAdmin}
+                  onPress={() => setFlag({ checkin_window_min: m })}
+                />
+              ))}
+            </Row>
           </Card>
 
           <Card>
