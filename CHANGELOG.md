@@ -17,6 +17,62 @@ Newest first.
 
 ## 12 August 2026
 
+### A whole day, end to end — and the bug that only that could find
+
+Every guard built over the last two sessions had been tested on its own. This
+runs the **morning and afternoon of one school day** against a real Postgres, in
+the order the app makes the calls, as the roles that make them: trip generation,
+a parent reporting an absence after the wall-clock cutoff, a check-in, the
+15-minute alerts, a refused departure and then an allowed one, the `in_transit`
+promotion, the batch drop-off, completion, the watchdog on a clean day and on a
+trip that never ended, boarding a student recorded as absent, an undo, a
+cross-van lookup, a delay, and the state of the record afterwards.
+
+**36 assertions, on three install paths** — a fresh `schema.sql`, a clean install
+from the patches, and an upgrade of a database that had already applied the
+earlier ones. All passing.
+
+**The bug it found.** C4 requires a note before a student recorded as absent can
+be boarded. The check was “the note is not empty” — but `note` is a single column
+shared by every path that writes the row, and `apply_change_request()` already
+puts the **absence reason** in it. So a child marked absent with the reason
+“Ill.” could be boarded with no explanation at all, and the parent notification
+would then have read:
+
+> **“Ill. Boarded at 3:42 PM.”**
+
+— presenting the reason the child was marked absent as the driver's explanation
+for carrying them. The guard now requires the note to be non-empty **and changed
+by this write**. A note that has not changed is not an explanation for this
+action.
+
+Every piece was correct in isolation. The defect only existed where a parent's
+absence reason and a driver's boarding note met in the same column, which is
+exactly what an end-to-end run is for.
+
+**A second ordering bug, found by the same run:** patch 2 re-installed its own
+copy of that function *over* patch 1's, so fixing patch 1 alone silently did
+nothing. Both patch files now carry the corrected version, and
+`2026-08-12c-stale-note.sql` fixes a database that already applied the first two.
+
+### The watchdog runs without cron now
+
+`pg_cron` is a Supabase extension somebody has to enable by hand, and until they
+do, **nothing checks the clock** — which for the one feature whose entire job is
+noticing silence is the worst possible default.
+
+The staff app now sweeps too: the Dashboard and Exceptions tabs call
+`transport_watchdog()` and `send_arrival_alerts()` on focus, throttled to once
+every two minutes. Same belt-and-braces pattern as `ensureTodaysTrips`, and both
+functions dedupe server-side so repeated calls cost a query and change nothing.
+
+This is a **floor, not a substitute**. It only runs while somebody has the app
+open, which is precisely the assumption the watchdog exists to remove. `pg_cron`
+is still the answer.
+
+`verify.sql` also now checks that the C4 guard is the *fixed* version, not merely
+that the function exists — a distinction no existence check would catch.
+
 ### Push notifications that actually arrive, and a real split between “wrong” and “happened”
 
 Prompted by two answers to the plan's open questions: **nobody watches the

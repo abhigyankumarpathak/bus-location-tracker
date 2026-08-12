@@ -501,7 +501,16 @@ language plpgsql security definer set search_path = public as $$
 begin
   if new.status = 'boarded'
      and old.status in ('absent', 'parent_pickup', 'no_show')
-     and coalesce(btrim(new.note), '') = '' then
+     -- The note must be non-empty AND NEW.
+     --
+     -- `note` is one column shared by every path that writes this row, and
+     -- apply_change_request() already puts the ABSENCE REASON in it ("Ill.").
+     -- Checking only that it is non-empty therefore passed on a note left behind
+     -- by a different action entirely — and notify_on_rider_status() would then
+     -- have told the parents "Ill. Boarded at 3:42 PM", presenting the reason
+     -- they were marked absent as the driver's explanation for carrying them.
+     -- A note that has not changed is not an explanation for THIS write.
+     and (coalesce(btrim(new.note), '') = '' or new.note is not distinct from old.note) then
     raise exception
       'Boarding a student recorded as % needs a note saying what happened.',
       replace(old.status::text, '_', ' ');

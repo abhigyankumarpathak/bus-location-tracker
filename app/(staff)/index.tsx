@@ -5,6 +5,7 @@ import { useAuth } from '../../src/lib/auth';
 import { supabase } from '../../src/lib/supabase';
 import {
   ensureTodaysTrips,
+  sweepIfDue,
   today,
   useReference,
   useTripStatuses,
@@ -93,6 +94,8 @@ export default function StaffDashboard() {
     useCallback(() => {
       ensureTodaysTrips().then(reload);
       loadDrivers();
+      // Until pg_cron is enabled, this is the only thing that watches the clock.
+      sweepIfDue();
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [loadDrivers]),
   );

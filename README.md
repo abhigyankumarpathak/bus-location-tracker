@@ -79,6 +79,13 @@ the first admin can get in.
 **Student** — Today (route, hub, planned time, driver's first name, vehicle,
 status, Check In), Club Status, History, read-only Profile.
 
+**The watchdog** — the one thing that watches the clock rather than waiting for a
+driver to tap something. Every five minutes during operating hours it raises a
+route that never started, a van overdue at a stop, a child still waiting at a
+hub, a trip that never ended, a child still aboard after the last stop, and an
+urgent message nobody acknowledged — each **once**, clearing itself when the
+condition goes away. Thresholds are set in Setup, not in code.
+
 **Parent** — a card per child with the live status and next expected event, the
 full trip timeline (Scheduled → Waiting → Boarded → In Transit → Dropped Off →
 Completed), Daily Change (absence, parent pickup, club), alerts, and history.
@@ -88,15 +95,30 @@ stop roster grouped by hub, per-student actions (Boarded, No-Show, Absent, Paren
 Pickup, Dropped Off Safely, Unable to Drop Off), incident reporting, and the End
 Trip checklist.
 
-**Transport office** — summary cards, the trip board with driver assignment, the
-exception queue, invites (create a user, choose their role, hand them a code), and
-configuration of hubs, vans, routes, and who rides them.
+**Transport office** — summary cards and the trip board with driver assignment;
+**Exceptions** (only what has gone wrong, ordered by how bad it is if nobody
+looks); **Notifications** (the feed, and approvals waiting on a decision);
+**History** (every override and correction, read-only); invites (create a user,
+choose their role, hand them a code); and configuration of hubs, vans, routes,
+watchdog thresholds and who rides them.
 
 ## Things the database refuses to allow
 
 These are not UI checks. They are triggers and policies, and they hold against a
 raw API call:
 
+- A driver leaving a stop with a student still unaccounted for — unless they
+  explicitly record leaving anyway, which files an incident per child and tells
+  the guardians and the office immediately.
+- Any rider status change that is not a legal step. `scheduled → dropped_off`
+  (never boarded, never on the van) is refused, and the whole transition table is
+  written down in [docs/FEATURES.md](docs/FEATURES.md).
+- Boarding a student recorded as absent without a note explaining why — and the
+  note has to be a *new* one, not whatever happened to be in the column.
+- A student checking in at 3am, outside the check-in window.
+- A departure recorded before the arrival at the same stop.
+- Overwriting an arrival time the parents have already been shown.
+- Any authenticated account generating trips for an arbitrary date.
 - A student or parent writing `boarded` or `dropped_off`.
 - A driver ending a trip while any student is still Scheduled, Waiting, Boarded,
   or In Transit. *"Cannot end the trip: 2 student(s) still have no final status."*

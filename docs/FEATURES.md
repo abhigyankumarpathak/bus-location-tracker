@@ -716,6 +716,24 @@ The remediation document carries a full checklist at the bottom.
 
 ---
 
+## Verified end to end
+
+A whole school day — morning and afternoon — is simulated against a real
+Postgres and asserted at every step: trip generation, a parent reporting an
+absence after the wall-clock cutoff, a student checking in, the 15-minute
+arrival alerts, the driver being refused a departure and then allowed one, the
+`in_transit` promotion, the batch drop-off at school, trip completion, the
+watchdog on a clean day and on a trip that never ended, boarding a student
+recorded as absent, an undo, a cross-van lookup, a reported delay, and the state
+of the record afterwards. **36 assertions, all passing**, on three separate
+install paths: a fresh `schema.sql`, a clean install from the patches, and an
+upgrade of a database that had already applied the earlier patches.
+
+That is what caught the one bug the individual tests could not — see the
+stale-note fix in the changelog. Every guard was correct alone; the defect only
+existed when a parent's absence reason and a driver's boarding note met in the
+same column.
+
 ## The rider state machine
 
 RLS decides **who** may write **which** status. Until 12 August nothing decided

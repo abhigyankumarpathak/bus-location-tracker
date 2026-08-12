@@ -423,3 +423,49 @@ export function useMyChildren() {
 export async function ensureTodaysTrips() {
   await supabase.rpc('ensure_todays_trips');
 }
+
+/**
+ * When the staff app last ran the watchdog itself. Module-level, so it survives
+ * tab switches — the staff tabs stay mounted and re-focus constantly.
+ */
+let lastSweep = 0;
+const SWEEP_EVERY_MS = 120_000;
+
+/**
+ * Run the watchdog and the arrival alerts from the app, when cron cannot.
+ *
+ * pg_cron is the real answer and the Setup tab schedules it. But it is a
+ * Supabase extension somebody has to enable by hand, and until they do, NOTHING
+ * checks the clock — which for the one feature whose entire job is noticing
+ * silence is the worst possible default.
+ *
+ * So the staff app sweeps too, whenever a coordinator has it open. Same pattern
+ * as ensureTodaysTrips: belt and braces, idempotent, and it means the pilot
+ * works before anyone has touched the dashboard. Both functions dedupe
+ * server-side, so calling them repeatedly costs a query and changes nothing.
+ *
+ * Throttled to once every two minutes because the staff tabs re-focus on every
+ * switch, and this is a real round trip.
+ *
+ * This is NOT a substitute for cron: it only runs while somebody has the app
+ * open, which is exactly the assumption the watchdog exists to remove. It is a
+ * floor, not a ceiling.
+ */
+export async function sweepIfDue(force = false) {
+  if (!force && Date.now() - lastSweep < SWEEP_EVERY_MS) return;
+  lastSweep = Date.now();
+  // Errors are deliberately swallowed: a coordinator opening a tab should not
+  // see a red banner because the watchdog is not installed yet. The Setup tab
+  // is where that gets reported properly.
+  // supabase-js returns a thenable builder, not a real Promise, so it has no
+  // .catch — the error comes back in the result instead. Ignoring it is the
+  // point here.
+  await Promise.all([
+    (async () => {
+      await supabase.rpc('transport_watchdog');
+    })(),
+    (async () => {
+      await supabase.rpc('send_arrival_alerts');
+    })(),
+  ]);
+}
