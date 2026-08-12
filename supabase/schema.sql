@@ -154,7 +154,20 @@ create table organization (
   -- in a moving vehicle by someone also responsible for children; mistaps are
   -- not an edge case. Long enough to notice, short enough that it is still an
   -- undo rather than a rewrite of history.
-  undo_window_sec int not null default 90 check (undo_window_sec > 0)
+  undo_window_sec int not null default 90 check (undo_window_sec > 0),
+
+  -- The timezone the VANS run in.
+  --
+  -- `planned_arrival` and `planned_departure` are `time` columns: wall-clock
+  -- times for the operation, with no zone attached. Every comparison against
+  -- them used to resolve in the DATABASE's timezone, which on Supabase is UTC —
+  -- so an operation running in New York had every one of them four or five hours
+  -- out. The watchdog decided every morning route was hours overdue before the
+  -- day began, and the "your van is due in 15 minutes" alerts fired overnight.
+  --
+  -- Use a REGION name, not an abbreviation: 'America/New_York' follows daylight
+  -- saving, 'EST' is a fixed -05:00 and is wrong for half the year.
+  time_zone text not null default 'UTC'
 );
 
 insert into organization (id) values (1);
@@ -638,6 +651,25 @@ create index account_removals_email_idx on account_removals (lower(email));
 -- recursing into the profiles policies)
 -- ---------------------------------------------------------------------------
 
+/**
+ * The timezone the vans run in, and a planned time resolved into it.
+ *
+ * Every wall-clock comparison in this schema goes through local_ts(). Before it
+ * existed they each did `(date + time)::timestamptz`, which resolves in the
+ * DATABASE's timezone — UTC on Supabase — so a New York operation was four hours
+ * out on the watchdog, the arrival alerts, the change cutoff and the check-in
+ * window simultaneously.
+ */
+create or replace function org_tz() returns text
+language sql stable security definer set search_path = public as $$
+  select coalesce(nullif(btrim(time_zone), ''), 'UTC') from organization where id = 1;
+$$;
+
+create or replace function local_ts(on_date date, at_time time) returns timestamptz
+language sql stable security definer set search_path = public as $$
+  select (on_date + at_time) at time zone org_tz();
+$$;
+
 create or replace function my_role() returns user_role
 language sql stable security definer set search_path = public as $$
   select role from profiles where id = auth.uid() and status = 'active';
@@ -731,9 +763,9 @@ language sql stable security definer set search_path = public as $$
       and t.date = current_date
       and (
         rs.planned_arrival is null
-        or now() between (t.date + rs.planned_arrival)::timestamptz
+        or now() between local_ts(t.date, rs.planned_arrival)
                          - make_interval(mins => o.checkin_window_min)
-                     and (t.date + rs.planned_arrival)::timestamptz + interval '30 min'
+                     and local_ts(t.date, rs.planned_arrival) + interval '30 min'
       )
   );
 $$;
@@ -1114,10 +1146,10 @@ begin
   -- The cutoff is judged against the FIRST day the request covers. A holiday
   -- booked in advance is always in time; only the day it starts on can be late.
   -- Morning cutoff governs absence; afternoon governs pickup and club changes.
-  cutoff := (new.date + case
+  cutoff := local_ts(new.date, case
     when new.kind = 'absent' then org.morning_cutoff
     else org.afternoon_cutoff
-  end)::timestamptz;
+  end);
 
   -- S4: the cutoff is a WALL CLOCK, and the thing that actually matters is the
   -- trip boundary. Between 06:30 and the van pulling away, an absence sat
@@ -2186,10 +2218,10 @@ create trigger on_trip_completion before update on daily_trips
 -- for one reason: it converts every silent failure in the system into an alert,
 -- including the ones nobody enumerated.
 --
--- Timezone note: planned times are `time` columns and are read as
--- `(date + time)::timestamptz`, matching decide_change_request(). That resolves
--- in the DATABASE's timezone, so a project running in UTC while the vans run in
--- London will be an hour out twice a year. One place to fix, when it matters.
+-- Timezone: planned times are `time` columns with no zone attached, and are
+-- resolved through local_ts(), which reads organization.time_zone. Set that to
+-- the region the vans run in ('America/New_York', not 'EST') or every threshold
+-- here is measured against the wrong clock.
 -- ---------------------------------------------------------------------------
 
 create or replace function transport_watchdog() returns jsonb
@@ -2229,7 +2261,7 @@ begin
   where t.date = current_date
     and t.status = 'scheduled'
     and fs.planned_departure is not null
-    and now() > (t.date + fs.planned_departure)::timestamptz
+    and now() > local_ts(t.date, fs.planned_departure)
                 + make_interval(mins => cfg.watchdog_trip_start_min)
     -- A trip with nobody on it is not an emergency.
     and exists (select 1 from student_trip_status x where x.trip_id = t.id)
@@ -2266,7 +2298,7 @@ begin
     -- the fastest way to teach a coordinator to ignore it. Mirrors `isOrigin` on
     -- the driver's trip screen.
     and not (rs.school_id is not null and rt.type = 'afternoon')
-    and now() > (t.date + rs.planned_arrival)::timestamptz
+    and now() > local_ts(t.date, rs.planned_arrival)
                 + make_interval(mins => cfg.watchdog_stop_arrival_min)
     and exists (
       select 1 from student_trip_status x
@@ -2495,7 +2527,13 @@ begin
     execute $q$
       select cron.schedule(
         'transport-watchdog',
-        '*/5 6-19 * * 1-5',
+        -- Every five minutes, always. The old '6-19 * * 1-5' window was in the
+        -- DATABASE's timezone, so on a UTC project it covered 02:00–15:59 in New
+        -- York and missed the afternoon run entirely. The function is naturally
+        -- quiet outside operating hours anyway — nothing is overdue at 3am
+        -- because nothing is scheduled — so the window bought noise reduction
+        -- that was never needed and a timezone bug that was.
+        '*/5 * * * *',
         'select transport_watchdog()'
       )
     $q$;
@@ -2560,7 +2598,7 @@ begin
              coalesce(h.name, s.name, 'the stop') as stop_name,
              -- S1: a reported delay shifts every remaining planned time, so a
              -- late van does not keep sending confidently wrong alerts.
-             (t.date + rs.planned_arrival)::timestamptz
+             local_ts(t.date, rs.planned_arrival)
                + make_interval(mins => coalesce(t.delay_minutes, 0)) as due_at
       from daily_trips t
       join route_stops rs on rs.route_id = t.route_id
@@ -2675,7 +2713,7 @@ begin
   from (
     select gl.parent_id as user_id,
            coalesce(h.name, s.name, 'your stop') as stop_name,
-           (t.date + rs.planned_arrival)::timestamptz + make_interval(mins => total) as due_at
+           local_ts(t.date, rs.planned_arrival) + make_interval(mins => total) as due_at
     from student_trip_status sts
     join route_stops rs on rs.id = coalesce(sts.pickup_stop_id, sts.dropoff_stop_id)
     left join hubs    h on h.id = rs.hub_id
@@ -2687,7 +2725,7 @@ begin
     union
     select sts.student_id,
            coalesce(h.name, s.name, 'your stop'),
-           (t.date + rs.planned_arrival)::timestamptz + make_interval(mins => total)
+           local_ts(t.date, rs.planned_arrival) + make_interval(mins => total)
     from student_trip_status sts
     join route_stops rs on rs.id = coalesce(sts.pickup_stop_id, sts.dropoff_stop_id)
     left join hubs    h on h.id = rs.hub_id
@@ -2793,7 +2831,7 @@ begin
     -- Every two minutes: the 5-minute milestone needs finer resolution than the
     -- watchdog's five-minute tick or it lands late enough to be useless.
     execute $q$
-      select cron.schedule('arrival-alerts', '*/2 6-19 * * 1-5', 'select send_arrival_alerts()')
+      select cron.schedule('arrival-alerts', '*/2 * * * *', 'select send_arrival_alerts()')
     $q$;
   else
     begin

@@ -37,7 +37,11 @@ with expected(kind, name, label) as (values
   ('trigger','on_announcement_posted',     'N5 · targeted fan-out'),
   -- Not "does it exist" but "is it the FIXED one". Patch 3 rewrote this
   -- function; the stale-note bug is invisible to an existence check.
-  ('body',   'guard_boarding_after_away|is not distinct from', 'C4 · stale-note fix (patch 3)')
+  ('body',   'guard_boarding_after_away|is not distinct from', 'C4 · stale-note fix (patch 3)'),
+  ('column', 'organization.time_zone',      'TZ · the clock the vans run on (patch 4)'),
+  ('func',   'local_ts',                    'TZ · planned times resolved locally (patch 4)'),
+  ('body',   'transport_watchdog|local_ts', 'TZ · watchdog uses it (patch 4)'),
+  ('body',   'send_arrival_alerts|local_ts','TZ · arrival alerts use it (patch 4)')
 )
 select
   case when found then '✅ OK  ' else '❌ MISSING' end as status,

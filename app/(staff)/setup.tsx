@@ -104,6 +104,16 @@ const WATCHDOG_THRESHOLDS: {
   },
 ];
 
+/** Region names, never abbreviations — 'EST' does not follow daylight saving. */
+const TIMEZONES: { value: string; label: string }[] = [
+  { value: 'America/New_York', label: 'US Eastern' },
+  { value: 'America/Chicago', label: 'US Central' },
+  { value: 'America/Denver', label: 'US Mountain' },
+  { value: 'America/Los_Angeles', label: 'US Pacific' },
+  { value: 'Europe/London', label: 'UK' },
+  { value: 'UTC', label: 'UTC' },
+];
+
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const ROUTE_TYPES: RouteType[] = ['morning', 'afternoon', 'club', 'emergency'];
 
@@ -510,6 +520,7 @@ export default function StaffSetup() {
     afternoon_cutoff?: string;
     checkin_window_min?: number;
     watchdog_enabled?: boolean;
+    time_zone?: string;
     watchdog_trip_start_min?: number;
     watchdog_stop_arrival_min?: number;
     watchdog_waiting_min?: number;
@@ -1381,6 +1392,35 @@ export default function StaffSetup() {
                 onValueChange={(v) => setFlag({ watchdog_enabled: v })}
               />
             </Row>
+          </Card>
+
+          <SectionLabel>What clock are the vans on?</SectionLabel>
+          <Card>
+            <Text style={styles.fine}>
+              Stop times are wall-clock times with no timezone attached. The watchdog, the arrival
+              alerts, the change deadline and the check-in window all compare against them — so if
+              this is wrong, all four are wrong by the same number of hours.
+            </Text>
+            <Row style={styles.wrap}>
+              {TIMEZONES.map((tz) => (
+                <Button
+                  key={tz.value}
+                  label={tz.label}
+                  variant={org?.time_zone === tz.value ? 'primary' : 'secondary'}
+                  onPress={() => setFlag({ time_zone: tz.value })}
+                />
+              ))}
+            </Row>
+            <Text style={styles.fine}>
+              Currently {org?.time_zone ?? 'UTC'}. Region names follow daylight saving on their own;
+              “EST” would be an hour out all summer.
+            </Text>
+            {org?.time_zone === 'UTC' ? (
+              <Text style={styles.warn}>
+                ⚠ UTC is the default, not a choice. If your vans are not actually on UTC, every time
+                above is being measured against the wrong clock.
+              </Text>
+            ) : null}
           </Card>
 
           <SectionLabel>Automatic sweep</SectionLabel>

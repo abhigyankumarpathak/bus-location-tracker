@@ -17,6 +17,41 @@ Newest first.
 
 ## 12 August 2026
 
+### The vans are not in UTC
+
+Found while working out why a live database showed no watchdog activity. Supabase
+runs the database in UTC. `planned_arrival` and `planned_departure` are `time`
+columns — wall-clock times for the operation, with no zone attached — and every
+comparison against them resolved in the *database's* timezone.
+
+For an operation running in New York that is a **four-hour error**, and it hit
+four things simultaneously:
+
+- the watchdog decided every morning route was hours overdue before the day
+  began, and would never have noticed a genuinely late afternoon one;
+- "your van is due in 15 minutes" fired overnight;
+- the change-request cutoff was judged against the wrong clock;
+- the check-in window opened and closed at the wrong times.
+
+A 07:15 pickup was being evaluated as **03:15 New York time**.
+
+`organization.time_zone` now holds the operation's zone and every comparison goes
+through `local_ts()`. Settable in **Setup → Watchdog**, with a warning while it is
+still on the UTC default, because UTC is what you get by not choosing rather than
+a choice anyone made. Region names only — `America/New_York` follows daylight
+saving, `EST` is a fixed −05:00 and wrong all summer.
+
+**Both cron schedules widened** for the same reason. They ran `6-19 * * 1-5`,
+which is in the database's timezone: on a UTC project that is 02:00–15:59 in New
+York, missing the afternoon run entirely. They now run all day. That costs
+nothing — the watchdog is naturally silent when nothing is scheduled, so the
+window was buying noise reduction that was never needed and a timezone bug that
+was.
+
+The end-to-end day now runs under both settings and shows the difference: 36/36
+with the zone set correctly, and a failing arrival-alert assertion when it is
+wrong — which is the fix demonstrably doing something.
+
 ### A whole day, end to end — and the bug that only that could find
 
 Every guard built over the last two sessions had been tested on its own. This
