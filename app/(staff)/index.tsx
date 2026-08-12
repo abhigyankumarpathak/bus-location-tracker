@@ -45,6 +45,8 @@ export default function StaffDashboard() {
   const [body, setBody] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  /** Which route an announcement is for. Null = everybody (N5). */
+  const [announceRoute, setAnnounceRoute] = useState<string | null>(null);
 
   // Admin-only re-run / delete of a trip. Both demand a reason before they run,
   // so the trip board reveals an inline reason box rather than acting on the
@@ -105,44 +107,42 @@ export default function StaffDashboard() {
     await reload();
   }
 
+  /**
+   * Post an announcement to the people it is actually about (N5).
+   *
+   * The fan-out used to happen HERE, in the client, and went to every active
+   * student, parent and driver in the organisation regardless of who the message
+   * concerned. It now lives in a trigger on the table, so it cannot be skipped,
+   * and it respects `route_id`: "Route 2 is running late" no longer wakes up
+   * every family on every other van.
+   */
   async function announce() {
     if (!profile) return;
     setBusy(true);
     setError('');
 
-    const { error: e } = await supabase
-      .from('announcements')
-      .insert({ title: title.trim(), body: body.trim(), created_by: profile.id });
+    const { error: e } = await supabase.from('announcements').insert({
+      title: title.trim(),
+      body: body.trim(),
+      route_id: announceRoute,
+      created_by: profile.id,
+    });
 
+    setBusy(false);
     if (e) {
       setError(e.message);
-      setBusy(false);
       return;
-    }
-
-    // Announcements also become notifications so they push.
-    const { data: everyone } = await supabase
-      .from('profiles')
-      .select('id')
-      .eq('status', 'active')
-      .in('role', ['student', 'parent', 'driver']);
-
-    const people = (everyone as { id: string }[]) ?? [];
-    if (people.length) {
-      await supabase.from('notifications').insert(
-        people.map((p) => ({
-          user_id: p.id,
-          title: title.trim(),
-          body: body.trim(),
-          kind: 'announcement',
-        })),
-      );
     }
 
     setTitle('');
     setBody('');
-    setBusy(false);
-    Alert.alert('Sent', `Announced to ${people.length} people.`);
+    Alert.alert(
+      'Sent',
+      announceRoute
+        ? `Announced to everyone riding ${ref.routeOf(announceRoute)?.name ?? 'that route'}, and its driver.`
+        : 'Announced to everyone.',
+    );
+    setAnnounceRoute(null);
   }
 
   if (loading || ref.loading) return <Loading />;
@@ -444,8 +444,31 @@ export default function StaffDashboard() {
           numberOfLines={3}
           style={styles.textarea}
         />
+        <Text style={styles.fine}>Who needs to see this?</Text>
+        <Row style={styles.wrap}>
+          <Button
+            label="Everyone"
+            variant={announceRoute === null ? 'primary' : 'secondary'}
+            onPress={() => setAnnounceRoute(null)}
+          />
+          {ref.routes
+            .filter((r) => r.active)
+            .map((r) => (
+              <Button
+                key={r.id}
+                label={r.name}
+                variant={announceRoute === r.id ? 'primary' : 'secondary'}
+                onPress={() => setAnnounceRoute(r.id)}
+              />
+            ))}
+        </Row>
+        <Text style={styles.fine}>
+          A route announcement reaches everyone riding it from today onwards, their guardians, and
+          its driver — and nobody else. Three vans makes that a nicety; thirty makes it the
+          difference between people reading these and muting them.
+        </Text>
         <Button
-          label="Send to everyone"
+          label={announceRoute ? 'Send to that route' : 'Send to everyone'}
           onPress={announce}
           loading={busy}
           disabled={!title.trim() || !body.trim()}

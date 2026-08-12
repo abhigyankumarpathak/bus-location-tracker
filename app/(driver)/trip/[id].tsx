@@ -11,12 +11,15 @@ import {
   RIDER_STATUS_TONE,
   ROUTE_TYPE_LABEL,
   decodeBoardingQr,
+  isAway,
   isFinal,
+  unresolvedAtStop,
 } from '../../../src/lib/types';
 import type {
   BoardingCodeOwner,
   IncidentKind,
   Profile,
+  RiderLookup,
   RiderStatus,
   StudentTripStatus,
 } from '../../../src/lib/types';
@@ -63,7 +66,7 @@ const DROP_ACTIONS: { status: RiderStatus; label: string; variant?: 'primary' | 
 export default function DriverTrip() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { session } = useAuth();
-  const { gpsEnabled, attendanceMode } = useFeatures();
+  const { gpsEnabled, attendanceMode, undoWindowSec } = useFeatures();
   const me = session?.user.id;
 
   const ref = useReference();
@@ -74,9 +77,41 @@ export default function DriverTrip() {
   const [busyStop, setBusyStop] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [incidentNote, setIncidentNote] = useState('');
+  const [delaying, setDelaying] = useState(false);
+
+  /** C7: "this student isn't on my list" — who are they, and whose van? */
+  const [lookupOpen, setLookupOpen] = useState(false);
+  const [lookupName, setLookupName] = useState('');
+  const [lookupBusy, setLookupBusy] = useState(false);
+  const [lookupHits, setLookupHits] = useState<RiderLookup[] | null>(null);
+
+  /** Which rider is being boarded at a stop that is not theirs, and why. */
+  const [wrongStopFor, setWrongStopFor] = useState<{ rowId: string; stopId: string } | null>(null);
+  const [wrongStopNote, setWrongStopNote] = useState('');
 
   /** Which stop the scanner is open for. Null = closed. */
   const [scanStop, setScanStop] = useState<string | null>(null);
+
+  /**
+   * Which stop the driver tried to leave with somebody unaccounted for. This is
+   * the CLEARING step: the departure is held, the people with no outcome are
+   * listed here with their buttons, and the driver either resolves them or
+   * leaves anyway on the record.
+   */
+  const [blockedStop, setBlockedStop] = useState<string | null>(null);
+
+  /** Which away student the driver is boarding anyway, and why. */
+  const [turnUpId, setTurnUpId] = useState<string | null>(null);
+  const [turnUpNote, setTurnUpNote] = useState('');
+
+  /**
+   * Drives the undo countdown.
+   *
+   * Undo is only offered for a few seconds, so the buttons have to disappear on
+   * their own — a screen that keeps offering an undo the database will refuse is
+   * worse than not offering one. Ticks only while the trip is running.
+   */
+  const [now, setNow] = useState(() => Date.now());
 
   /** What the van is actually doing about its position, in the driver's words. */
   const [trackingState, setTrackingState] = useState<'off' | 'background' | 'foreground'>('off');
@@ -189,6 +224,19 @@ export default function DriverTrip() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trackingState, trip?.id, trip?.status, trip?.vehicle_id]);
 
+  useEffect(() => {
+    if (trip?.status !== 'active') return;
+    const timer = setInterval(() => setNow(Date.now()), 5_000);
+    return () => clearInterval(timer);
+  }, [trip?.status]);
+
+  /** Is `at` still inside the undo window? */
+  const undoable = useCallback(
+    (at: string | null | undefined) =>
+      Boolean(at) && now - new Date(at as string).getTime() < undoWindowSec * 1000,
+    [now, undoWindowSec],
+  );
+
   const nameOf = (studentId: string) =>
     students.find((s) => s.id === studentId)?.full_name ?? 'Student';
 
@@ -211,7 +259,34 @@ export default function DriverTrip() {
     await reload();
   }
 
-  async function markDeparted(stopId: string) {
+  /**
+   * Leave a stop — in two phases, because leaving one used to be the quietest
+   * way to lose a child.
+   *
+   * The old version wrote `departed_at` and promoted whoever had boarded. A
+   * student who tapped "I'm at the hub" and was never boarded simply stayed
+   * `waiting` while the van pulled away, and NOTHING fired: the catch was End
+   * trip, potentially forty minutes and eight stops later. That is worse than
+   * the child who never checked in, because the app knew they were there.
+   *
+   * So the same question End trip asks is now asked here, where the van is still
+   * at the kerb: does anyone at this stop have no outcome? If so the write is
+   * held and they are listed with their buttons (the CLEARING step below) rather
+   * than the driver being sent back up the screen to find them.
+   *
+   * The driver is never stuck. `force` leaves anyway — a van that cannot move is
+   * its own safety problem — and the database takes it, because the flag is set.
+   * It just stops being free: `record_forced_departure()` files an incident per
+   * child and their parents and the office are told immediately, instead of
+   * nobody being told at all.
+   */
+  async function departStop(stopId: string, opts: { skipped?: boolean; force?: boolean } = {}) {
+    const unresolved = unresolvedAtStop(riders, stopId);
+    if (unresolved.length && !opts.force) {
+      setBlockedStop(stopId);
+      return;
+    }
+
     setBusyStop(stopId);
     setError('');
     // Leaving a stop puts everyone who boarded THERE in transit. This is what the
@@ -224,7 +299,15 @@ export default function DriverTrip() {
     const { error: e } = await supabase
       .from('trip_stop_progress')
       .upsert(
-        { trip_id: id, stop_id: stopId, departed_at: new Date().toISOString() },
+        {
+          trip_id: id,
+          stop_id: stopId,
+          departed_at: new Date().toISOString(),
+          // Never inferred from a null arrival: "deliberately skipped" and "the
+          // arrival was never recorded" are different facts about a child.
+          skipped: Boolean(opts.skipped),
+          departed_with_unresolved: unresolved.length > 0,
+        },
         { onConflict: 'trip_id,stop_id' },
       );
     if (e) {
@@ -238,7 +321,25 @@ export default function DriverTrip() {
         .in('id', boardedHere.map((r) => r.id));
     }
     setBusyStop(null);
+    setBlockedStop(null);
     await reload();
+  }
+
+  function confirmLeaveAnyway(stopId: string, unresolved: StudentTripStatus[], where: string) {
+    Alert.alert(
+      `Leave ${where} without ${unresolved.length === 1 ? 'them' : 'all of them'}?`,
+      `${unresolved
+        .map((r) => `• ${nameOf(r.student_id)} — ${RIDER_STATUS_LABEL[r.status]}`)
+        .join('\n')}\n\nYou can always keep driving. This records an incident for each of them, and tells their parents and the transport office right now.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Leave anyway',
+          style: 'destructive',
+          onPress: () => departStop(stopId, { force: true }),
+        },
+      ],
+    );
   }
 
   async function setStatus(row: StudentTripStatus, status: RiderStatus, note?: string) {
@@ -255,9 +356,74 @@ export default function DriverTrip() {
 
     if (e) {
       setError(e.message);
-      return;
+      return false;
     }
     await reload();
+    return true;
+  }
+
+  const runAction = (row: StudentTripStatus, status: RiderStatus) =>
+    status === 'unable_to_drop_off' ? confirmUnableToDrop(row) : setStatus(row, status);
+
+  /**
+   * Take back the last tap on a student.
+   *
+   * A mistapped `no_show` used to be TERMINAL — the card rendered with no
+   * actions at all and the only way out was a coordinator, mid-route, from a
+   * desk. The server reads the previous status out of the audit log and writes a
+   * COMPENSATING entry, so the record reads "this happened, then it was taken
+   * back" rather than quietly ceasing to mention it.
+   */
+  async function undoRider(row: StudentTripStatus) {
+    setError('');
+    setBusyId(row.id);
+    const { error: e } = await supabase.rpc('undo_rider_status', { row_id: row.id });
+    setBusyId(null);
+    if (e) return setError(e.message);
+    await reload();
+  }
+
+  /** Same, for the last arrive/depart tap on a stop. */
+  async function undoStop(stopId: string) {
+    setError('');
+    setBusyStop(stopId);
+    const { error: e } = await supabase.rpc('undo_stop_progress', {
+      target_trip: id,
+      target_stop: stopId,
+    });
+    setBusyStop(null);
+    if (e) return setError(e.message);
+    setBlockedStop(null);
+    await reload();
+  }
+
+  /**
+   * Board a student the record says is not travelling today.
+   *
+   * `absent`, `parent_pickup` and `no_show` are all final, so the boarding
+   * buttons are gone — which is right until the child is standing at the door.
+   * Then the driver has no way to record what is plainly happening, takes them
+   * anyway (of course they do), and the van is officially not carrying a child it
+   * is carrying. The fix is not to prevent it; it is to make it recordable.
+   *
+   * The note is not optional, and not only because this screen says so:
+   * `guard_boarding_after_away()` refuses the write without one. It reaches the
+   * parents and the transport office in the same minute, because the absence
+   * this contradicts is something the office is holding a request for.
+   */
+  async function boardAnyway(row: StudentTripStatus) {
+    const note = turnUpNote.trim();
+    if (!note) {
+      Alert.alert(
+        'Say what happened',
+        'Boarding a student who is marked as not travelling needs a note. It goes to their parents and the transport office.',
+      );
+      return;
+    }
+    if (await setStatus(row, 'boarded', note)) {
+      setTurnUpId(null);
+      setTurnUpNote('');
+    }
   }
 
   /**
@@ -364,13 +530,21 @@ export default function DriverTrip() {
       if (isFinal(row.status)) {
         return {
           tone: 'warn',
-          message: `${name} is recorded as ${RIDER_STATUS_LABEL[row.status]} today. Use the roster to change that.`,
+          message: isAway(row.status)
+            ? `${name} is recorded as ${RIDER_STATUS_LABEL[row.status]} today. If they have turned up, use “Boarding anyway” on their card — it needs a note.`
+            : `${name} is recorded as ${RIDER_STATUS_LABEL[row.status]} today. Use the roster to change that.`,
         };
       }
       if (row.pickup_stop_id !== scanStop) {
+        // C7: this used to be a dead end — the scanner said no and the manual
+        // buttons are only on their own stop's card, so a child at the wrong hub
+        // on the RIGHT van could not be boarded at all. The driver takes them
+        // anyway and the record says they were never picked up.
         return {
           tone: 'warn',
-          message: `${name} boards at ${ref.stopName(row.pickup_stop_id) ?? 'another stop'}, not here.`,
+          message: `${name} normally boards at ${
+            ref.stopName(row.pickup_stop_id) ?? 'another stop'
+          }. Close the scanner and use “Boarding here instead” on their card.`,
         };
       }
 
@@ -457,6 +631,73 @@ export default function DriverTrip() {
     await reload();
     Alert.alert('Trip completed', 'Every student has a final status.');
     router.back();
+  }
+
+  /**
+   * Say the van is running late, in minutes rather than in prose.
+   *
+   * Cumulative on the server: twenty minutes of traffic followed by another ten
+   * is thirty, because the driver is reporting what just happened, not restating
+   * a running total they would have to remember.
+   */
+  async function reportDelay(minutes: number) {
+    if (!trip) return;
+    setError('');
+    setDelaying(true);
+    const { error: e } = await supabase.rpc('report_delay', {
+      target_trip: trip.id,
+      minutes,
+      reason: incidentNote.trim() || null,
+    });
+    setDelaying(false);
+    if (e) return setError(e.message);
+    setIncidentNote('');
+    await reload();
+    Alert.alert('Families told', `Every remaining stop on this route moved by ${minutes} minutes.`);
+  }
+
+  /**
+   * Find out whose van a child in front of you actually belongs on.
+   *
+   * RLS means a driver cannot see a student who is not on their trip — which is
+   * correct, and which is exactly why a child boarding the wrong van was
+   * invisible to everybody: a no-show on one van and a non-person on the other.
+   * The server answers with a name, a route, a driver and a hub, and nothing
+   * else.
+   */
+  async function lookupRider() {
+    setError('');
+    setLookupBusy(true);
+    const { data, error: e } = await supabase.rpc('find_rider_today', { search: lookupName });
+    setLookupBusy(false);
+    if (e) {
+      setError(e.message);
+      setLookupHits(null);
+      return;
+    }
+    setLookupHits((data as RiderLookup[]) ?? []);
+  }
+
+  /** Board a rider of THIS trip at a stop that is not the one they are assigned. */
+  async function boardAtThisStop() {
+    if (!wrongStopFor) return;
+    const note = wrongStopNote.trim();
+    if (!note) {
+      Alert.alert('Say what happened', 'Boarding a student at a stop that is not theirs needs a note.');
+      return;
+    }
+    setError('');
+    setBusyId(wrongStopFor.rowId);
+    const { error: e } = await supabase.rpc('board_at_other_stop', {
+      status_id: wrongStopFor.rowId,
+      actual_stop: wrongStopFor.stopId,
+      reason: note,
+    });
+    setBusyId(null);
+    if (e) return setError(e.message);
+    setWrongStopFor(null);
+    setWrongStopNote('');
+    await reload();
   }
 
   async function reportIncident(kind: IncidentKind) {
@@ -579,6 +820,22 @@ export default function DriverTrip() {
         // the case worth batching — overwhelmingly the morning arrival at school.
         const canDropAll = active && arrived && toDropHere.length >= 2;
 
+        // Everyone here the van would be leaving behind with no outcome. Held
+        // against the SAME rule the database enforces, so the list the driver
+        // sees is exactly the list the write would be refused on.
+        const unresolvedHere = unresolvedAtStop(riders, stop.id);
+        const clearing = blockedStop === stop.id;
+
+        // Riders on this van who are still to board, but at a DIFFERENT stop.
+        // These are the ones who can turn up here by mistake.
+        const elsewhere = riders.filter(
+          (r) =>
+            r.pickup_stop_id !== stop.id &&
+            r.pickup_stop_id != null &&
+            !isFinal(r.status) &&
+            !['boarded', 'in_transit'].includes(r.status),
+        );
+
         return (
           <View key={stop.id} style={styles.stopBlock}>
             <SectionLabel>
@@ -594,15 +851,32 @@ export default function DriverTrip() {
                     ? `Arrived ${fmtTime(prog.arrived_at)}`
                     : isOrigin
                       ? 'Start of the route'
-                      : reachable
-                        ? 'Van is due here next'
-                        : 'Not reached yet'}
+                      : prog?.skipped
+                        ? 'Skipped — nobody was due here'
+                        : reachable
+                          ? 'Van is due here next'
+                          : 'Not reached yet'}
                   {prog?.departed_at
                     ? ` · Departed ${fmtTime(prog.departed_at)}`
                     : isDestination
                       ? ' · final stop'
                       : ''}
                 </Text>
+                {prog?.departed_with_unresolved ? (
+                  <Text style={styles.warnLine}>
+                    ⚠ Left with students unaccounted for. The transport office and their parents
+                    were told.
+                  </Text>
+                ) : null}
+                {/* The way back from a mistap, for as long as it is still a mistap. */}
+                {active && (undoable(prog?.departed_at) || undoable(prog?.arrived_at)) ? (
+                  <Button
+                    label={prog?.departed_at ? 'Undo — I have not left yet' : 'Undo — not here yet'}
+                    variant="ghost"
+                    loading={busyStop === stop.id}
+                    onPress={() => undoStop(stop.id)}
+                  />
+                ) : null}
                 {canArrive || canDepart ? (
                   <Row style={styles.wrap}>
                     {canArrive ? (
@@ -616,14 +890,107 @@ export default function DriverTrip() {
                     ) : null}
                     {canDepart ? (
                       <Button
-                        label={allAway && !arrived ? 'Skip this stop' : 'Departed this stop'}
+                        label={
+                          allAway && !arrived
+                            ? 'Skip this stop'
+                            : unresolvedHere.length
+                              ? `Departed this stop — ${unresolvedHere.length} to settle`
+                              : 'Departed this stop'
+                        }
                         loading={busyStop === stop.id}
                         style={styles.action}
-                        onPress={() => markDeparted(stop.id)}
+                        onPress={() => departStop(stop.id, { skipped: allAway && !arrived })}
                       />
                     ) : null}
                   </Row>
                 ) : null}
+              </Card>
+            ) : null}
+
+            {/*
+              The CLEARING step. The driver asked to leave and somebody here has
+              no outcome, so the departure is held and they are listed HERE with
+              their own buttons — the alternative is sending a driver holding a
+              phone in a moving vehicle back up the screen to find them.
+
+              "Leave anyway" is always available. What it is not is silent.
+            */}
+            {clearing ? (
+              <Card style={styles.urgent}>
+                {unresolvedHere.length ? (
+                  <>
+                    <Text style={styles.urgentTitle}>
+                      {unresolvedHere.length === 1
+                        ? '1 student here has no outcome'
+                        : `${unresolvedHere.length} students here have no outcome`}
+                    </Text>
+                    <Text style={styles.urgentBody}>
+                      Settle each one before you pull away — or leave anyway, which tells their
+                      parents and the transport office right now.
+                    </Text>
+
+                    {unresolvedHere.map((row) => {
+                      const boardingHere = row.pickup_stop_id === stop.id;
+                      return (
+                        <View key={row.id} style={styles.clearRow}>
+                          <Row style={styles.between}>
+                            <View style={styles.grow}>
+                              <Text style={styles.studentName}>{nameOf(row.student_id)}</Text>
+                              <Text style={styles.fine}>
+                                {boardingHere
+                                  ? row.check_in_time
+                                    ? `Checked in ${fmtTime(row.check_in_time)} — they said they were here`
+                                    : 'Never checked in'
+                                  : row.board_time
+                                    ? `On board since ${fmtTime(row.board_time)} — due off here`
+                                    : 'Due off here'}
+                              </Text>
+                            </View>
+                            <Badge
+                              label={RIDER_STATUS_LABEL[row.status]}
+                              tone={RIDER_STATUS_TONE[row.status]}
+                            />
+                          </Row>
+                          <Row style={styles.wrap}>
+                            {(boardingHere ? ACTIONS : DROP_ACTIONS).map((a) => (
+                              <Button
+                                key={a.status}
+                                label={a.label}
+                                variant={a.variant}
+                                loading={busyId === row.id}
+                                style={styles.action}
+                                onPress={() => runAction(row, a.status)}
+                              />
+                            ))}
+                          </Row>
+                        </View>
+                      );
+                    })}
+
+                    <Button
+                      label="Leave anyway"
+                      variant="danger"
+                      loading={busyStop === stop.id}
+                      onPress={() =>
+                        confirmLeaveAnyway(
+                          stop.id,
+                          unresolvedHere,
+                          ref.stopName(stop.id) ?? 'this stop',
+                        )
+                      }
+                    />
+                    <Button label="Not yet" variant="ghost" onPress={() => setBlockedStop(null)} />
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.batchTitle}>Everyone here has an outcome.</Text>
+                    <Button
+                      label="Departed this stop"
+                      loading={busyStop === stop.id}
+                      onPress={() => departStop(stop.id)}
+                    />
+                  </>
+                )}
               </Card>
             ) : null}
 
@@ -651,6 +1018,76 @@ export default function DriverTrip() {
                   You scan the code on their phone. The buttons on each student still work if a
                   phone is flat.
                 </Text>
+              </Card>
+            ) : null}
+
+            {/*
+              C7: a child on this van, waiting at a hub that is not theirs.
+
+              Their card only renders under their OWN stop, so before this there
+              was no way to board them here at all — the scanner refused and the
+              buttons were on a card further down the screen that did not apply.
+              Recording it as what it is beats the driver taking them and the
+              record saying they were never picked up.
+            */}
+            {active && arrived && !departed && elsewhere.length > 0 ? (
+              <Card style={styles.progressCard}>
+                {wrongStopFor?.stopId === stop.id ? (
+                  <>
+                    <Text style={styles.batchTitle}>
+                      Boarding {nameOf(
+                        riders.find((r) => r.id === wrongStopFor.rowId)?.student_id ?? '',
+                      )} here
+                    </Text>
+                    <Field
+                      label="Why are they at this stop? (required)"
+                      value={wrongStopNote}
+                      onChangeText={setWrongStopNote}
+                      placeholder="Walked to this hub instead — mum dropped her here."
+                      multiline
+                      numberOfLines={2}
+                      style={styles.textarea}
+                    />
+                    <Row style={styles.wrap}>
+                      <Button
+                        label="Board them here"
+                        loading={busyId === wrongStopFor.rowId}
+                        style={styles.action}
+                        onPress={boardAtThisStop}
+                      />
+                      <Button
+                        label="Cancel"
+                        variant="ghost"
+                        style={styles.action}
+                        onPress={() => {
+                          setWrongStopFor(null);
+                          setWrongStopNote('');
+                        }}
+                      />
+                    </Row>
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.fine}>
+                      Someone here who normally uses another hub? Board them at this stop and the
+                      record will say so.
+                    </Text>
+                    <Row style={styles.wrap}>
+                      {elsewhere.map((r) => (
+                        <Button
+                          key={r.id}
+                          label={`${nameOf(r.student_id)} — boarding here instead`}
+                          variant="secondary"
+                          style={styles.action}
+                          onPress={() => {
+                            setWrongStopFor({ rowId: r.id, stopId: stop.id });
+                            setWrongStopNote('');
+                          }}
+                        />
+                      ))}
+                    </Row>
+                  </>
+                )}
               </Card>
             ) : null}
 
@@ -693,6 +1130,10 @@ export default function DriverTrip() {
               const isDropoffStop = row.dropoff_stop_id === stop.id;
               const showBoarding = trip.status === 'active' && !done && isPickupStop && !onboard;
               const showDropoff = trip.status === 'active' && !done && isDropoffStop && onboard;
+              // The child the record says is not travelling, standing at the
+              // door. `done` is true for all three away statuses, so the normal
+              // buttons are gone — this is the way back in.
+              const showTurnedUp = trip.status === 'active' && isPickupStop && isAway(row.status);
               const fmt = (t: string) =>
                 new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
@@ -739,14 +1180,72 @@ export default function DriverTrip() {
                           variant={a.variant}
                           loading={busyId === row.id}
                           style={styles.action}
-                          onPress={() =>
-                            a.status === 'unable_to_drop_off'
-                              ? confirmUnableToDrop(row)
-                              : setStatus(row, a.status)
-                          }
+                          onPress={() => runAction(row, a.status)}
                         />
                       ))}
                     </Row>
+                  ) : showTurnedUp ? (
+                    turnUpId === row.id ? (
+                      <>
+                        <Field
+                          label="What happened? (required)"
+                          value={turnUpNote}
+                          onChangeText={setTurnUpNote}
+                          placeholder="Mum brought her to the hub after all."
+                          multiline
+                          numberOfLines={2}
+                          style={styles.textarea}
+                        />
+                        <Row style={styles.wrap}>
+                          <Button
+                            label="Board them"
+                            loading={busyId === row.id}
+                            style={styles.action}
+                            onPress={() => boardAnyway(row)}
+                          />
+                          <Button
+                            label="Cancel"
+                            variant="ghost"
+                            style={styles.action}
+                            onPress={() => {
+                              setTurnUpId(null);
+                              setTurnUpNote('');
+                            }}
+                          />
+                        </Row>
+                        <Text style={styles.fine}>
+                          Their parents and the transport office are told immediately, with your
+                          note — someone is expecting this child not to be on the van.
+                        </Text>
+                      </>
+                    ) : (
+                      <Button
+                        label="Boarding anyway — turned up"
+                        variant="secondary"
+                        style={styles.action}
+                        onPress={() => {
+                          setTurnUpId(row.id);
+                          setTurnUpNote('');
+                        }}
+                      />
+                    )
+                  ) : null}
+
+                  {/*
+                    Undo the last tap on THIS student, for a few seconds after it.
+
+                    Deliberately separate from the buttons above: those record
+                    what happened, this says the last one did not. It disappears
+                    on its own, because offering an undo the database will refuse
+                    is worse than not offering one.
+                  */}
+                  {trip.status === 'active' && undoable(row.updated_at) ? (
+                    <Button
+                      label={`Undo — not ${RIDER_STATUS_LABEL[row.status].toLowerCase()}`}
+                      variant="ghost"
+                      loading={busyId === row.id}
+                      onPress={() => undoRider(row)}
+                    />
                   ) : null}
                 </Card>
               );
@@ -756,6 +1255,133 @@ export default function DriverTrip() {
       })}
 
       {riders.length === 0 ? <Empty>No students on this trip.</Empty> : null}
+
+      {/*
+        C7, manual mode. Scan mode can already name a child holding a code for
+        another van; typing a name is the same answer without a phone in the
+        child's hand.
+
+        Without this, a child boarding the wrong van is invisible to everybody:
+        RLS means this driver cannot see them, so they are a no-show on one van
+        and do not exist on the other, and nobody is told by anybody.
+      */}
+      {trip.status === 'active' ? (
+        <>
+          <SectionLabel>Someone here isn’t on your list?</SectionLabel>
+          <Card>
+            {!lookupOpen ? (
+              <>
+                <Text style={styles.fine}>
+                  Find out whose van they should be on before you drive away. You will see their
+                  route, their driver and their hub — nothing else.
+                </Text>
+                <Button
+                  label="Look up a student"
+                  variant="secondary"
+                  onPress={() => {
+                    setLookupOpen(true);
+                    setLookupHits(null);
+                    setLookupName('');
+                  }}
+                />
+              </>
+            ) : (
+              <>
+                <Field
+                  label="Their name"
+                  value={lookupName}
+                  onChangeText={setLookupName}
+                  placeholder="Priya"
+                  autoCapitalize="words"
+                />
+                <Row style={styles.wrap}>
+                  <Button
+                    label="Search"
+                    loading={lookupBusy}
+                    style={styles.action}
+                    onPress={lookupRider}
+                  />
+                  <Button
+                    label="Close"
+                    variant="ghost"
+                    style={styles.action}
+                    onPress={() => {
+                      setLookupOpen(false);
+                      setLookupHits(null);
+                    }}
+                  />
+                </Row>
+
+                {lookupHits?.length === 0 ? (
+                  <Text style={styles.warnLine}>
+                    Nobody by that name is riding today. Call the office before you carry them.
+                  </Text>
+                ) : null}
+
+                {lookupHits?.map((hit) => (
+                  <Card key={hit.status_id} style={hit.is_mine ? styles.batch : styles.urgent}>
+                    <Text style={styles.studentName}>{hit.student_name}</Text>
+                    {hit.is_mine ? (
+                      <Text style={styles.fine}>
+                        On your van — {ROUTE_TYPE_LABEL[hit.route_kind]}, boards at {hit.hub_name}.
+                        Currently {RIDER_STATUS_LABEL[hit.rider_status].toLowerCase()}. Use their
+                        card above.
+                      </Text>
+                    ) : (
+                      <Text style={styles.urgentBody}>
+                        Rides {hit.route_name} with {hit.driver_name}, from {hit.hub_name} — not
+                        this van. Do not carry them; call the office so they can move them across.
+                      </Text>
+                    )}
+                  </Card>
+                ))}
+              </>
+            )}
+          </Card>
+        </>
+      ) : null}
+
+      {/*
+        S1: a STRUCTURED delay, not a free-text incident.
+
+        `delay_minutes` and `delay_reason` have been on daily_trips since the
+        first schema and nothing has ever written them. The only delay path was
+        an incident, which notifies parents and then shifts nothing — every
+        planned time in the app carried on as if the van were on schedule, and
+        the "due in 15 minutes" alerts kept firing confidently wrong.
+      */}
+      {trip.status === 'active' ? (
+        <>
+          <SectionLabel>Running late?</SectionLabel>
+          <Card>
+            <Text style={styles.fine}>
+              This moves every remaining expected time on this route and tells the families the new
+              one. It is not the same as reporting an incident — use this for traffic.
+            </Text>
+            {trip.delay_minutes ? (
+              <Text style={styles.warnLine}>
+                Already reported {trip.delay_minutes} minutes late
+                {trip.delay_reason ? ` — ${trip.delay_reason}` : ''}. Adding more is cumulative.
+              </Text>
+            ) : null}
+            <Row style={styles.wrap}>
+              {[10, 15, 30].map((m) => (
+                <Button
+                  key={m}
+                  label={`+${m} min`}
+                  variant="secondary"
+                  loading={delaying}
+                  style={styles.action}
+                  onPress={() => reportDelay(m)}
+                />
+              ))}
+            </Row>
+            <Text style={styles.fine}>
+              Anything you have typed in “What happened?” below is sent as the reason.
+            </Text>
+          </Card>
+        </>
+      ) : null}
 
       <SectionLabel>Report an incident</SectionLabel>
       <Card>
@@ -874,5 +1500,7 @@ const styles = StyleSheet.create({
   urgent: { borderColor: theme.danger, backgroundColor: '#2A1D1D' },
   urgentTitle: { fontSize: 15, fontWeight: '700', color: theme.danger },
   urgentBody: { fontSize: 13, color: theme.text, lineHeight: 19 },
+  warnLine: { fontSize: 12, color: theme.warn, lineHeight: 17 },
+  clearRow: { gap: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: theme.border },
   textarea: { minHeight: 76, textAlignVertical: 'top', paddingTop: 12 },
 });

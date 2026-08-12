@@ -32,6 +32,13 @@ export default function StaffLayout() {
         }}
       />
       <Tabs.Screen
+        name="audit"
+        options={{
+          title: 'History',
+          tabBarIcon: ({ focused }) => <TabIcon glyph="🧾" focused={focused} />,
+        }}
+      />
+      <Tabs.Screen
         name="setup"
         options={{
           title: 'Setup',

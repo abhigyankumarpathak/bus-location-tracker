@@ -50,32 +50,75 @@ Deno.serve(async (req) => {
   const { createClient } = await import('jsr:@supabase/supabase-js@2');
   const admin = createClient(Deno.env.get('SUPABASE_URL')!, serviceKey);
 
+  // S6: every outcome is RECORDED on the notification row, including the
+  // failures. Before this, a user with no push token produced no row, no retry
+  // and no trace — so "we sent it" was unfalsifiable, and the only backstop was
+  // an in-app inbox that needs the app opened. For an URGENT could-not-drop-off,
+  // that is not a delivery mechanism.
+  const mark = async (
+    state: 'sent' | 'no_token' | 'failed',
+    detail: string | null,
+  ) => {
+    await admin
+      .from('notifications')
+      .update({
+        delivery_state: state,
+        delivery_detail: detail,
+        delivered_at: state === 'sent' ? new Date().toISOString() : null,
+      })
+      .eq('id', record.id);
+  };
+
   const { data: profile } = await admin
     .from('profiles')
     .select('expo_push_token')
     .eq('id', record.user_id)
     .maybeSingle();
 
-  // No token just means this user has never opened the app on a device that
-  // granted notification permission. Not an error — they'll still see the
-  // notification in-app.
+  // No token means this user has never opened the app on a device that granted
+  // notification permission. Still not an error — but it IS now a fact on the
+  // record, so the office can see who is unreachable before it matters.
   if (!profile?.expo_push_token) {
+    await mark('no_token', 'No push token on file for this user.');
     return json({ ok: true, delivered: false, reason: 'no push token on file' });
   }
 
-  const response = await fetch('https://exp.host/--/api/v2/push/send', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({
-      to: profile.expo_push_token,
-      title: record.title,
-      body: record.body,
-      sound: record.kind === 'emergency' ? 'default' : null,
-      priority: record.kind === 'emergency' ? 'high' : 'normal',
-      data: { notification_id: record.id, kind: record.kind },
-    }),
-  });
+  // The two urgent kinds ring through a silenced phone. Everything else does not.
+  const urgent =
+    record.kind === 'emergency' ||
+    record.kind === 'unable_to_drop_off' ||
+    record.kind === 'no_show_after_checkin';
+
+  let response: Response;
+  try {
+    response = await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        to: profile.expo_push_token,
+        title: record.title,
+        body: record.body,
+        sound: urgent ? 'default' : null,
+        priority: urgent ? 'high' : 'normal',
+        data: { notification_id: record.id, kind: record.kind },
+      }),
+    });
+  } catch (err) {
+    await mark('failed', `Could not reach the push service: ${String(err)}`);
+    return json({ ok: false, delivered: false, error: String(err) }, 502);
+  }
 
   const result = await response.json();
-  return json({ ok: response.ok, delivered: response.ok, result });
+
+  // Expo answers 200 with a per-message error for a token it has retired, so the
+  // HTTP status alone is not the answer.
+  const ticketError = result?.data?.status === 'error' ? result?.data?.message : null;
+
+  if (!response.ok || ticketError) {
+    await mark('failed', ticketError ?? `Push service returned ${response.status}.`);
+    return json({ ok: false, delivered: false, result });
+  }
+
+  await mark('sent', null);
+  return json({ ok: true, delivered: true, result });
 });

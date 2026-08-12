@@ -218,6 +218,53 @@ select cron.schedule(
 
 It is idempotent — running it twice creates nothing extra.
 
+## 10. The watchdog, and arrival alerts (strongly recommended)
+
+Everything else in this system escalates because a **driver tapped something**.
+If the phone dies, is pocketed, or the driver simply stops tapping, the trip
+stays open for ever and nobody is told anything. The watchdog is the only thing
+that watches the clock instead.
+
+Both switches live in the app: **Setup → Watchdog**. They need `pg_cron`
+(Database → Extensions), and the switches say so plainly if it is missing.
+
+- **Check every five minutes** — `transport_watchdog()`, 06:00–19:59 Mon–Fri.
+  Raises a route that never started, a van overdue at a stop, a child still
+  waiting at a hub, a trip that never ended, a child still aboard after the last
+  stop, and an urgent message nobody has acknowledged. Each breach alerts
+  **once**, and clears itself when the condition goes away.
+- **Send arrival alerts** — `send_arrival_alerts()`, every two minutes in the
+  same window. This is the “your van is due in 15 minutes” message. Two minutes
+  rather than five because the 5-minute milestone needs the resolution.
+
+Operating hours only, deliberately: a watchdog that wakes someone at 3am about a
+route nobody was running is a watchdog that gets muted, and then the real ones
+stop being read too.
+
+By hand, if you prefer:
+
+```sql
+select cron.schedule('transport-watchdog', '*/5 6-19 * * 1-5',
+                     $$ select transport_watchdog() $$);
+select cron.schedule('arrival-alerts',     '*/2 6-19 * * 1-5',
+                     $$ select send_arrival_alerts() $$);
+```
+
+With cron off, both still work — the office presses **Check for anything
+unreported** on the Exceptions tab. But “someone remembers to press it” is not a
+safety net.
+
+## 11. Applying schema changes to a live database
+
+`supabase/schema.sql` is the canonical definition and **drops every table** at
+the top, so re-running it on a database with real trips in it destroys them.
+
+`supabase/patches/` holds the same changes as `alter` statements, safe to run on
+live data and idempotent. Run them in filename order:
+
+1. `2026-08-12-c4-c1-s9.sql`
+2. `2026-08-12b-c2-c5-c6-c7-c8-and-the-s-n-series.sql`
+
 ---
 
 ## What protects what

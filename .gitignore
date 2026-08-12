@@ -47,3 +47,6 @@ yarn-error.*
 # Supabase CLI scratch state (link/project refs, not source)
 supabase/.temp/
 supabase/.branches/
+
+# Personal Claude Code settings for this checkout — not for the team.
+.claude/settings.local.json

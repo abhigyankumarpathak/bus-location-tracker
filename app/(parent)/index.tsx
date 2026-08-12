@@ -16,7 +16,6 @@ import {
 import type { RiderStatus, StudentTripStatus } from '../../src/lib/types';
 import { stopsStillToVisit } from '../../src/lib/eta';
 import type { Coord } from '../../src/lib/eta';
-import { ALERT_MINUTES, scheduleArrivalAlerts } from '../../src/lib/alerts';
 import { VanEta } from '../../src/components/VanEta';
 import { GpsDisabled } from '../../src/components/Disabled';
 import {
@@ -59,33 +58,11 @@ export default function ParentChildren() {
   }, []);
 
   // Blueprint §4.1: 15- and 5-minute alerts, for every linked child at once.
-  // A parent with two children on different hubs gets four alerts, each naming
-  // the child — "Your van" would be useless to them.
-  useEffect(() => {
-    if (ref.loading || childrenLoading) return;
-
-    const arrivals = rows
-      .map((row) => {
-        const child = children.find((c) => c.id === row.student_id);
-        if (!child) return null;
-
-        const hubStopId = ref.hubStopId(row.pickup_stop_id, row.dropoff_stop_id);
-        const stop = ref.stops.find((s) => s.id === hubStopId);
-        const when = stop?.planned_arrival ?? stop?.planned_departure;
-        const hub = ref.stopName(hubStopId);
-        if (!when || !hub) return null;
-
-        return {
-          id: row.id,
-          hubName: hub,
-          plannedArrival: when,
-          studentName: child.full_name.split(' ')[0],
-        };
-      })
-      .filter((a): a is NonNullable<typeof a> => a !== null);
-
-    scheduleArrivalAlerts(arrivals);
-  }, [rows, children, childrenLoading, ref.loading, ref.stops, ref.stopName]);
+  //
+  // Sent by send_arrival_alerts() on the server now, not scheduled on this
+  // device — so they work on web, survive the app never being opened, and a
+  // parent with two children at the same hub gets ONE message naming both
+  // rather than two a second apart.
 
   if (childrenLoading || loading || ref.loading) return <Loading />;
 
@@ -190,8 +167,8 @@ export default function ParentChildren() {
                       }
                       return (
                         <Text style={styles.fine}>
-                          🔔 Van due at {hub} at {due.slice(0, 5)} — you will be alerted{' '}
-                          {ALERT_MINUTES.join(' and ')} minutes before.
+                          🔔 Van due at {hub} at {due.slice(0, 5)} — you will be alerted 15 and 5
+                          minutes before.
                         </Text>
                       );
                     })()}

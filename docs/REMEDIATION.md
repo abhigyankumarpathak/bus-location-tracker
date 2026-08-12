@@ -10,8 +10,9 @@ Two things to know before reading:
   open questions were already settled here — per-stop drop-off, student check-in
   being firewalled from boarding, and empty-stop skipping. Those are not in this
   plan because they are not problems.
-- **Four items are already closed**, by the 10 August session. They are listed
-  first so nobody re-does them.
+- **Four items were already closed** by the 10 August session. The 12 August
+  session closed **everything else except C3**. There is a full checklist at the
+  bottom of this document; the per-item sections below are kept for the reasoning.
 
 Severity is about what happens if it is wrong, not how long it takes to fix.
 **Safety** marks a path where a child can be unaccounted for and nobody is told.
@@ -29,38 +30,30 @@ Severity is about what happens if it is wrong, not how long it takes to fix.
 
 ---
 
+## Already closed — 12 August 2026
+
+Phase 1's C1 and Phase 2's C4, plus S9, which folded into C1 as planned. Applied
+as `supabase/patches/2026-08-12-c4-c1-s9.sql` and folded into `schema.sql`.
+
+| | Was | Now |
+| --- | --- | --- |
+| **C4** | `isFinal('absent')` meant the driver saw **no buttons** for a child standing in front of them, on any away status. The only route out was a coordinator override from a desk. So the driver took the child and the record said absent. | **“Boarding anyway — turned up”** on any away status. `guard_boarding_after_away()` refuses the write without a note — the database, not the screen. Guardians *and* the coordinator are told, in different words from a routine boarding, under kind `boarded_after_away`. |
+| **C1** | `markDeparted` promoted only `boarded` riders. A student who tapped *“I'm at the hub”* stayed `waiting` while the van pulled away, and nothing fired until **End trip**, eight stops later. | Two-phase departure. `guard_stop_departure()` refuses it; the app holds the write first and offers *Boarded / No-show / Absent* inline. `departed_with_unresolved` still leaves — a driver must be able to keep driving — but files an incident **per child** and notifies their guardians and the office immediately. |
+| **S9** | Nothing enforced `departed_at >= arrived_at`, a re-tapped arrival overwrote the original time, and skipped-vs-served was inferred from a null. | Both check constraints; the trigger raises a sentence before the constraint name reaches the driver. A driver cannot overwrite a recorded time (staff still can — that is C5). Explicit `skipped` boolean. |
+| — | `notify_on_incident()` broadcast every incident's description to every guardian on the route. C1's per-child incidents would have named the left-behind child to every other family. | An incident carrying a `student_id` goes to that student's guardians only. Coordinators still get everything. |
+| — | `schema.sql` could not be re-run: `trip_stop_progress` and `assignment_requests` were missing from the drop list, so they survived with old columns and the create failed halfway through. | Both added to the drop list. |
+
+---
+
 ## Phase 1 — the silent failures
 
 **Why first:** these are the only two items where a child can end up unaccounted
 for and *no human is told at all*. Everything else in this plan is worse data or a
 harder job. These two are worse outcomes. Both are small, and mostly server-side.
 
-### C1 — Departing a stop with a checked-in student is unguarded  · Safety
+### ~~C1 — Departing a stop with a checked-in student is unguarded~~ · Closed 12 Aug
 
-`markDeparted` promotes only `boarded` riders to `in_transit`
-([app/(driver)/trip/[id].tsx](../app/%28driver%29/trip/%5Bid%5D.tsx)). A student who
-tapped *“I'm at the hub”* and was never boarded stays `waiting` while the van pulls
-away. Nothing fires. The catch is at **End trip** — potentially forty minutes and
-eight stops later.
-
-Worse than the child who never checked in, because the app *knew* they were there.
-
-**Approach — two-phase departure.** Add a `CLEARING` step between arrived and
-departed:
-
-1. `trip_stop_progress` gains `departed_with_unresolved boolean not null default false`.
-2. New `before insert or update` trigger `guard_stop_departure()`. When
-   `departed_at` is being set, count riders assigned to that stop whose status is
-   not terminal-for-this-stop. If any, and the override flag is false → `raise`.
-3. Override is allowed — a driver must always be able to keep driving — but costs
-   an `incidents` row and immediate notifications to the affected guardians and
-   the coordinator. Not silence.
-4. Driver UI: pre-check before the write and offer the outcome inline
-   (*Boarded / No-show / Absent*) rather than sending them back up the screen.
-
-**Effort:** ~half a day. **Risk:** low; additive trigger, existing notification path.
-
-### C2 — Nothing on the server watches the clock  · Safety
+### ~~C2 — Nothing on the server watches the clock~~ · Closed 12 Aug
 
 All escalation is driven by a driver tap. If the phone dies, is pocketed, or the
 driver simply stops tapping, the trip stays `active` indefinitely and **nobody is
@@ -98,24 +91,13 @@ enumerated here.
 also responsible for children. Mistaps are not an edge case, and right now most of
 them require a phone call to the office.
 
-### C4 — A student marked absent who turns up cannot be boarded  · Safety
+### ~~C4 — A student marked absent who turns up cannot be boarded~~ · Closed 12 Aug
 
-`isFinal('absent')` is true, so `showBoarding` is false and the driver sees **no
-buttons** for a child standing in front of them. Same for `parent_pickup`. The only
-route out is a coordinator override, mid-route, from a desk.
+Built for `no_show` as well as `absent` and `parent_pickup` — a child who ran up
+two minutes late is the most common instance of it, and the undo in C5 only
+covers 90 seconds. `AWAY_STATUSES` in `src/lib/types.ts` is the list.
 
-What actually happens: the driver takes the child, because of course they do, and
-the record says absent. A child on a van that officially is not carrying them —
-the exact state this app exists to prevent.
-
-**Approach.** The RLS policy already permits a driver to write `boarded`; only the
-UI blocks it. Add **“Boarding anyway — turned up”** on any away status. Force a
-note, notify guardians and coordinator. Same shape as `unable_to_drop_off`: an
-exception that must be *recordable*, not one that must be prevented.
-
-**Effort:** ~2 hours. **Risk:** very low. Do this one first in the phase.
-
-### C5 — No undo, and no correction path for stop progress below admin  · Safety
+### ~~C5 — No undo, and no correction path for stop progress below admin~~ · Closed 12 Aug
 
 Two holes, one shape.
 
@@ -138,7 +120,7 @@ tool is `rerun_trip`, which is admin-only and wipes the whole trip.
 
 **Effort:** ~half a day. **Risk:** low. The audit-log reuse is what keeps it honest.
 
-### C8 — Transitions are unguarded; only the writer is checked
+### ~~C8 — Transitions are unguarded; only the writer is checked~~ · Closed 12 Aug
 
 RLS checks *who* may write *which* status, never *what may follow what*. A raw call
 with a driver's token can move a rider `scheduled → dropped_off`, never boarded,
@@ -156,7 +138,7 @@ away → boarded transition is in the table from the start.
 
 ## Phase 3 — connectivity
 
-### C3 — No offline queue  · Safety
+### C3 — No offline queue  · Safety · **STILL OPEN — the only one**
 
 Every driver action is a direct PostgREST write; a failure surfaces as a red
 string under a card. No retry, no queue, no local write-ahead log — `expo-sqlite`
@@ -188,7 +170,7 @@ keyed by row id, which helps.
 
 ## Phase 4 — telling people things
 
-### C6 — Arrival alerts are local-only, and fail totally and silently  · Safety
+### ~~C6 — Arrival alerts are local-only, and fail totally and silently~~ · Closed 12 Aug
 
 [src/lib/alerts.ts](../src/lib/alerts.ts) schedules on-device notifications. Four
 consequences, none observable by anyone:
@@ -215,7 +197,7 @@ minutes away” versus “due in 15 minutes”.
 
 **Effort:** ~1 day. **Risk:** low.
 
-### S1 — No structured delay, so a late van's alerts stay confidently wrong
+### ~~S1 — No structured delay, so a late van's alerts stay confidently wrong~~ · Closed 12 Aug
 
 `daily_trips.delay_minutes` and `delay_reason` exist and nothing writes them. The
 driver's only delay path is a free-text incident, which notifies parents but shifts
@@ -228,7 +210,7 @@ same query.
 
 **Effort:** ~half a day on top of C6.
 
-### S6 — Push has no delivery guarantee and no escalation
+### ~~S6 — Push has no delivery guarantee and no escalation~~ · Closed 12 Aug (SMS fallback still needs a provider)
 
 `send-push` returns early when a profile has no token
 ([supabase/functions/send-push](../supabase/functions/send-push/index.ts)). No
@@ -241,7 +223,7 @@ unacknowledged minutes.
 
 **Effort:** ~1 day, plus whatever the SMS provider decision costs.
 
-### S7 — No notification when the van reaches or leaves a stop
+### ~~S7 — No notification when the van reaches or leaves a stop~~ · Closed 12 Aug
 
 `trip_stop_progress` writes are silent, and `in_transit` has no notification at all
 despite appearing in the parent timeline. The parent's most-asked question — *has it
@@ -258,30 +240,95 @@ the moment the answer changes.
 
 | | Problem | Approach | Effort |
 | --- | --- | --- | --- |
-| **C7** | Wrong stop still unboardable; wrong vehicle undetectable in **manual** mode. Scan mode is covered. | “Boarded at a different stop” recording the actual stop. A driver-initiated “this student isn't on my list” lookup across today's trips, alerting the coordinator and letting staff move a rider between trips. Needs a widened RLS read for active same-org trips. | ~1 day |
-| **S2** | `no_show` after a check-in files identically to one from nothing — the first means the child said they were there and then were not picked up. | Keep one status; branch escalation on `check_in_time` being set. Route the checked-in case to the coordinator with acknowledgment. | 3 h |
-| **S4** | Cutoff is a wall clock, not a trip boundary. Between cutoff and departure an absence sits `pending`; if nobody is watching, the driver waits for a child who was never coming, then files a no-show that alarms everyone. | Auto-approve `absent` any time before that student's trip starts; hard-freeze at trip start; keep the queue for mid-route changes. An unnecessary absence costs a stop; a missed one costs a false alarm. | 4 h |
-| **S5** | Roster generation adds but never removes — `on conflict do nothing` means a student taken off a route stays on today's trip, blocking completion. | Delete `scheduled` rows with no matching assignment, mirroring the club-cancellation branch that already does this. | 2 h |
-| **S8** | `ensure_daily_trips` is `security definer` granted to every authenticated user — any student can materialise trip rows for an arbitrary date. | Restrict to staff, run from cron, give clients a narrow today-only wrapper. | 2 h |
-| **S9** | Stop progress has no integrity constraints: nothing enforces `departed_at >= arrived_at`, a re-tapped arrival overwrites the original time, and skipped-vs-served is inferred from a null. | A `check` on ordering, and an explicit `skipped` boolean. Fold into C1, which already touches this table. | 1 h |
-| **N1** | Two children at the same hub get two near-identical alerts. | Collapse when hub and time match. | 1 h |
-| **N2** | `checkin_window_min` exists with no check behind it — a student can check in at 3am. | Enforce in the student RLS policy, not the client. | 2 h |
-| **N3** | No audit-log viewer. Entries are written faithfully; nothing displays them. | A staff screen. The first time this matters will be a dispute — the worst moment to be writing SQL by hand. | 4 h |
-| **N4** | Cutoff times are SQL-only. | Surface in Setup. Do **after** S4, which changes their meaning. | 2 h |
-| **N5** | Announcements are not route- or child-targeted. | Fine at three vans, not at thirty. | 4 h |
+| ~~**C7**~~ | Wrong stop still unboardable; wrong vehicle undetectable in **manual** mode. Scan mode is covered. | “Boarded at a different stop” recording the actual stop. A driver-initiated “this student isn't on my list” lookup across today's trips, alerting the coordinator and letting staff move a rider between trips. Needs a widened RLS read for active same-org trips. | ~1 day |
+| ~~**S2**~~ | `no_show` after a check-in files identically to one from nothing — the first means the child said they were there and then were not picked up. | Keep one status; branch escalation on `check_in_time` being set. Route the checked-in case to the coordinator with acknowledgment. | 3 h |
+| ~~**S4**~~ | Cutoff is a wall clock, not a trip boundary. Between cutoff and departure an absence sits `pending`; if nobody is watching, the driver waits for a child who was never coming, then files a no-show that alarms everyone. | Auto-approve `absent` any time before that student's trip starts; hard-freeze at trip start; keep the queue for mid-route changes. An unnecessary absence costs a stop; a missed one costs a false alarm. | 4 h |
+| ~~**S5**~~ | Roster generation adds but never removes — `on conflict do nothing` means a student taken off a route stays on today's trip, blocking completion. | Delete `scheduled` rows with no matching assignment, mirroring the club-cancellation branch that already does this. | 2 h |
+| ~~**S8**~~ | `ensure_daily_trips` is `security definer` granted to every authenticated user — any student can materialise trip rows for an arbitrary date. | Restrict to staff, run from cron, give clients a narrow today-only wrapper. | 2 h |
+| ~~**S9**~~ | *Closed 12 Aug, folded into C1 as planned.* | | |
+| ~~**N1**~~ | Two children at the same hub get two near-identical alerts. | Collapse when hub and time match. | 1 h |
+| ~~**N2**~~ | `checkin_window_min` exists with no check behind it — a student can check in at 3am. | Enforce in the student RLS policy, not the client. | 2 h |
+| ~~**N3**~~ | No audit-log viewer. Entries are written faithfully; nothing displays them. | A staff screen. The first time this matters will be a dispute — the worst moment to be writing SQL by hand. | 4 h |
+| ~~**N4**~~ | Cutoff times are SQL-only. | Surface in Setup. Do **after** S4, which changes their meaning. | 2 h |
+| ~~**N5**~~ | Announcements are not route- or child-targeted. | Fine at three vans, not at thirty. | 4 h |
 
 ---
 
 ## Sequencing, in one line each
 
-1. **C4** first — two hours, removes the worst active-harm path.
-2. **C1 + S9** together — same table.
-3. **C2** — the watchdog. Everything after this fails loudly instead of silently.
-4. **C5**, then **C8** — correction paths, then lock the transition table around them.
-5. **C6 + S1 + S7** — one pass over the notification path.
-6. **C3** — the offline queue, once the safety work is not waiting on it.
-7. **S2, S4, S5, S8**, then **C7** manual mode.
-8. **N1–N5** as capacity allows. **N4** after **S4**.
+1. ~~**C4** first — two hours, removes the worst active-harm path.~~ *Done 12 Aug.*
+2. ~~**C1 + S9** together — same table.~~ *Done 12 Aug.*
+3. ~~**C2** — the watchdog. Everything after this fails loudly instead of silently.~~ *Done 12 Aug.*
+4. ~~**C5**, then **C8** — correction paths, then lock the transition table around them.~~ *Done 12 Aug.*
+5. ~~**C6 + S1 + S7** — one pass over the notification path.~~ *Done 12 Aug.*
+6. **C3** — the offline queue, once the safety work is not waiting on it. **← the only one left.**
+7. ~~**S2, S4, S5, S8**, then **C7** manual mode.~~ *Done 12 Aug.*
+8. ~~**N1–N5** as capacity allows. **N4** after **S4**.~~ *Done 12 Aug, N4 after S4 as instructed.*
+
+## Checklist — everything this plan asked for
+
+As of **12 August 2026**. Twenty-one of the twenty-two are done; **C3 is the one
+that is not**, and it is deliberately last for the reason the plan itself gives.
+
+**Phase 1 — the silent failures**
+
+- [x] **C1** Departing a stop with a checked-in student · *Safety* — two-phase departure, `guard_stop_departure()`, override files an incident per child
+- [x] **C2** Nothing on the server watches the clock · *Safety* — `transport_watchdog()`, six checks, alerts once, clears itself, thresholds in Setup
+
+**Phase 2 — correction paths**
+
+- [x] **C4** Absent student who turns up cannot be boarded · *Safety* — “Boarding anyway”, note required by the database
+- [x] **C5** No undo, no correction path for stop progress · *Safety* — `undo_rider_status()`, `undo_stop_progress()`, staff RLS on `trip_stop_progress` widened to `for all`
+- [x] **C8** Transitions unguarded — `guard_rider_transition()` holds the table; anything not in it is refused
+
+**Phase 3 — connectivity**
+
+- [ ] **C3** No offline queue · *Safety* — **not done.** The only item here that is genuinely a project (2–3 days), and the only one whose risk is *shipping it badly*: a half-built sync layer that drops or reorders writes is worse than no sync layer at all in an app about where children are. Everything else is now in place, so it is no longer blocking any safety work. See the note below.
+
+**Phase 4 — telling people things**
+
+- [x] **C6** Arrival alerts local-only and silently failing · *Safety* — `send_arrival_alerts()` on the notification path; `src/lib/alerts.ts` deleted
+- [x] **S1** No structured delay — `report_delay()`, cumulative, shifts every remaining time and re-fires the alerts
+- [x] **S6** Push has no delivery guarantee — delivery state recorded per notification; urgent kinds require acknowledgement and escalate to the watchdog. *SMS fallback still needs a provider decision.*
+- [x] **S7** No notification when the van reaches or leaves a stop — guardians told on departure from their own hub
+
+**Phase 5 — the rest**
+
+- [x] **C7** Wrong stop unboardable; wrong vehicle undetectable in manual mode — `find_rider_today()`, `board_at_other_stop()`, `move_rider_to_trip()`
+- [x] **S2** `no_show` after a check-in files identically — distinct escalation, its own section in the exception queue
+- [x] **S4** Cutoff is a wall clock, not a trip boundary — auto-approve until the van actually starts, hard-freeze after
+- [x] **S5** Roster generation adds but never removes — `scheduled` rows with no assignment are deleted
+- [x] **S8** `ensure_daily_trips` callable by any authenticated user — revoked; `ensure_todays_trips()` is the narrow client wrapper
+- [x] **S9** Stop progress has no integrity constraints — ordering check, explicit `skipped`, arrival not overwritable by the driver
+- [x] **N1** Two children at one hub, two near-identical alerts — collapsed, for arrival alerts and departure alerts
+- [x] **N2** `checkin_window_min` with no check behind it — enforced in the student RLS policy
+- [x] **N3** No audit-log viewer — the History tab
+- [x] **N4** Cutoff times SQL-only — Setup → Features, done after S4 as instructed
+- [x] **N5** Announcements not route- or child-targeted — targeting moved into a trigger; the client no longer fans out to everybody
+
+**Found while doing the above, and fixed**
+
+- [x] `notify_on_incident()` broadcast every incident's description to every guardian on the route — with C1 filing per-child incidents that would have named the left-behind child to every other family
+- [x] `schema.sql` could not be re-run — `trip_stop_progress` and `assignment_requests` were missing from the drop list
+- [x] `select coalesce(…) into` left variables NULL when no row matched, nulling whole notification bodies
+- [x] The watchdog would have false-alarmed on **every afternoon run** — the school is the origin the driver never marks arrival at
+
+### On C3
+
+The plan's own sequencing puts the offline queue last, "once the safety work is
+not waiting on it". That is now true: every other item is closed, and the
+watchdog means a driver who goes silent in a dead zone is *noticed* even with no
+queue at all — which was the part that actually mattered.
+
+What is left is the work itself, and it is not the kind to rush: an outbox needs
+ordering, idempotency and conflict rules that are correct on the first day,
+because the failure mode is a boarding record that arrives in the wrong order or
+not at all. The plan budgets 2–3 days and calls the risk *medium*. It should get
+that, not an afternoon.
+
+It also has a live dependency in **Still unanswered** below: *cell coverage
+across the whole route* decides whether C3 is a safeguard or load-bearing, and
+that changes how much of it is worth building.
 
 ## Still unanswered
 

@@ -62,6 +62,18 @@ built; QR does the same job on every phone with no extra hardware.
 
 **Absences cover a date range.** A month's holiday is one request, not twenty.
 
+**A watchdog watches the clock.** Every other escalation here waits for a driver
+to tap something; if the phone dies or is pocketed, nothing used to happen at all.
+`transport_watchdog()` runs every five minutes during operating hours and raises a
+route that never started, a van overdue at a stop, a child still waiting at a hub,
+a trip that never ended, a child still aboard after the last stop, and an urgent
+message nobody has acknowledged — each **once**, clearing itself when the
+condition goes away.
+
+**Twenty-one of the twenty-two findings** from the 10 August design review are
+closed as of 12 August. The exception is the offline queue — see
+[the remediation plan](REMEDIATION.md).
+
 **One thing the blueprint did not ask for:** a weekly archive and purge. Every
 Sunday each student's week is rolled into a single report and sent to their
 family, and only then is the routine detail behind it deleted — so the database
@@ -666,41 +678,74 @@ Nothing here is hidden elsewhere in this document.
 1. **No CSV export** (§1.1) — partly closed. Every family now gets a weekly report
    in the app (see above), which covers "a basic report". Nothing writes a
    downloadable **file** yet.
-2. **Check-in time window not enforced** (§4.1) — the column exists, the check does not.
-3. **No student photos on the driver roster** (§5.1) — a privacy decision for you, not me.
-4. **No photo attachment on incidents** (§5.1).
-5. **"Approaching" as a notification** (§6.2) — the live ETA now exists on screen
-   with GPS on; nothing pushes it.
-6. **Announcements are not route- or child-targeted** (§5.2).
-7. **No settings screen for cutoff times** (§6.1) — currently a SQL update.
-8. **No audit-log viewer** (§6.1) — entries are being written, nothing displays them.
-9. **Club-change notification** reaches the requester, not student + parent + driver (§6.2).
-10. **No `companyId`** — single-tenant. The expensive one to change later.
-11. **NFC not built.** The `attendance_mode` flag has two values, `manual` and
-    `scan`, and `scan` means QR. QR needs no hardware and works on every phone.
+2. **No student photos on the driver roster** (§5.1) — a privacy decision for you, not me.
+3. **No photo attachment on incidents** (§5.1).
+4. **"Approaching" as a GPS-derived notification** (§6.2) — the live ETA exists on
+   screen with GPS on, and scheduled "due in 15 / 5 minutes" alerts now push from
+   the server. What is still missing is the *position*-derived version, which is a
+   change to one query once GPS is on for real.
+5. **Club-change notification** reaches the requester, not student + parent + driver (§6.2).
+6. **No `companyId`** — single-tenant. The expensive one to change later.
+7. **NFC not built.** The `attendance_mode` flag has two values, `manual` and
+   `scan`, and `scan` means QR. QR needs no hardware and works on every phone.
+8. **No SMS fallback.** Urgent notifications now record delivery and demand
+   acknowledgement, and the watchdog escalates silence to the office — but the
+   final hop is still a person picking up a phone, not an automated SMS. That
+   needs a provider decision.
 
-### Found by the 10 August flow review — and not in the blueprint
+Closed since the last revision of this list: the check-in window is now enforced
+in the student's RLS policy (§4.1); cutoff times have a settings screen (§6.1);
+the audit log has a viewer (§6.1); announcements are route- and child-targeted
+(§5.2).
 
-A design review stress-tested the ride flow and found problems the blueprint never
-raised, several of them safety-critical. They are not listed individually here
-because they have their own document, with an approach and a sequence for each:
+### Found by the 10 August flow review
+
+A design review stress-tested the ride flow and found 22 problems the blueprint
+never raised, several of them safety-critical. They have their own document:
 
 > ### 📋 [**The remediation plan →**](REMEDIATION.md)
 
-The four worst, in one line each, so this document does not read as if everything
-is fine:
+As of **12 August 2026, twenty-one of the twenty-two are closed.** The one that
+is not is **C3, the offline queue** — a dead zone still loses driver actions
+until they reconnect, and the app does not yet queue them. It is deliberately
+last: the plan sequences it "once the safety work is not waiting on it", which is
+now true, and a half-built sync layer that drops or reorders writes would be
+worse than none in an app about where children are.
 
-- **A driver can depart a stop leaving a checked-in student there, and nothing
-  fires** until End trip — potentially forty minutes later.
-- **Nothing on the server watches the clock.** If a driver's phone dies, the trip
-  stays `active` forever and nobody is told. Every safety net currently needs
-  either a driver tap or a coordinator watching a screen.
-- **A student marked absent who turns up cannot be boarded by anyone on the
-  vehicle** — the driver sees no buttons at all, so the realistic outcome is a
-  child riding a van whose record says they are absent.
-- **No offline queue, and no undo.** A dead zone loses the boarding record; a
-  mistapped `no_show` needs a phone call to the office to correct, and a mistapped
-  departure cannot be corrected by a coordinator at all.
+The remediation document carries a full checklist at the bottom.
 
-The 10 August session closed one of the review's findings outright (the school-gate
-tap load) and half of another (wrong-vehicle detection, in scan mode only).
+---
+
+## The rider state machine
+
+RLS decides **who** may write **which** status. Until 12 August nothing decided
+**what may follow what** — so a raw API call with a driver's token could move a
+rider straight from `scheduled` to `dropped_off`, never boarded, never on the
+van, and every downstream consumer would have accepted it.
+
+`guard_rider_transition()` holds this table. Anything not in it is refused.
+
+| From | May become |
+| --- | --- |
+| `scheduled` | `waiting`, `boarded`, `absent`, `parent_pickup`, `no_show` |
+| `waiting` | `boarded`, `absent`, `parent_pickup`, `no_show` |
+| `boarded` | `in_transit`, `dropped_off`, `parent_pickup`, `unable_to_drop_off` |
+| `in_transit` | `dropped_off`, `unable_to_drop_off` |
+| `dropped_off` | `completed` |
+| `absent` | `boarded` |
+| `parent_pickup` | `boarded` |
+| `no_show` | `boarded` |
+| `unable_to_drop_off` | `dropped_off` |
+| `completed` | — terminal |
+
+Three things this table encodes that are worth saying out loud:
+
+- **The away → `boarded` edges are deliberate.** A child recorded as absent who
+  turns up is the exact state this app exists to prevent, so it has to be
+  *recordable* rather than prevented — the driver takes them either way. The
+  database separately refuses that write without a note.
+- **`boarded` → `parent_pickup`** is a parent arriving at the hub and taking a
+  child back off the van before it leaves. It happens.
+- **Staff are exempt**, because §2.1 already gives them override authority and
+  already demands a reason for it. So is an explicit undo, which is a compensating
+  action rather than a forward move.

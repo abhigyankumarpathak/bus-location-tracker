@@ -53,7 +53,73 @@ export interface Organization {
    * and overrides are kept regardless of this setting.
    */
   retention_weeks: number;
+
+  /**
+   * The watchdog — the one thing that watches the clock instead of waiting for a
+   * driver to tap something. Thresholds live in the database because the right
+   * number is an operational question: a rural route with a 40-minute gap
+   * between hubs needs different patience from a town run.
+   */
+  watchdog_enabled: boolean;
+  /** Trip still `scheduled` this long after the first stop's planned departure. */
+  watchdog_trip_start_min: number;
+  /** A stop with riders on it, unreached this long after its planned arrival. */
+  watchdog_stop_arrival_min: number;
+  /** A student sat on `waiting` — "I am at the hub" — for this long. */
+  watchdog_waiting_min: number;
+  /** A trip `active` longer than any real route takes. */
+  watchdog_trip_max_min: number;
+  /** A rider still on board this long after the van reached its final stop. */
+  watchdog_onboard_min: number;
+
+  /**
+   * How long a driver has to take back a mistap. This is a phone held one-handed
+   * in a moving vehicle by someone also responsible for children — mistaps are
+   * not an edge case.
+   */
+  undo_window_sec: number;
 }
+
+/** The five things the watchdog can notice. Mirrors the `watchdog_kind` enum. */
+export type WatchdogKind =
+  | 'trip_not_started'
+  | 'stop_not_reached'
+  | 'rider_waiting'
+  | 'trip_overrunning'
+  | 'rider_still_onboard'
+  | 'urgent_unacknowledged';
+
+/**
+ * Something the watchdog noticed that nobody has said is fine yet.
+ *
+ * Raised at most once per (kind, trip, stop, student) — pg_cron runs every five
+ * minutes and a stop twenty minutes late is still late on the next pass. It
+ * clears itself when the underlying condition goes away.
+ */
+export interface WatchdogAlert {
+  id: string;
+  trip_id: string | null;
+  stop_id: string | null;
+  student_id: string | null;
+  /** Set only for `urgent_unacknowledged` — the message nobody answered. */
+  notification_id: string | null;
+  kind: WatchdogKind;
+  detail: string;
+  raised_at: string;
+  notified_at: string | null;
+  resolved_at: string | null;
+  resolved_by: string | null;
+  resolution: string | null;
+}
+
+export const WATCHDOG_LABEL: Record<WatchdogKind, string> = {
+  trip_not_started: 'Route not started',
+  stop_not_reached: 'Van overdue at a stop',
+  rider_waiting: 'Student still waiting',
+  trip_overrunning: 'Trip never ended',
+  rider_still_onboard: 'Student still on board',
+  urgent_unacknowledged: 'Urgent message unanswered',
+};
 
 export interface Profile {
   id: string;
@@ -195,6 +261,22 @@ export function decodeBoardingQr(raw: string): { rowId: string; code: string } |
   return { rowId: parts[1], code: parts[2] };
 }
 
+/**
+ * What `find_rider_today()` gives a driver who says "this student isn't on my
+ * list" — the narrowest answer that gets the child onto the right vehicle. No
+ * contact details, no address, nothing beyond whose van they should be on.
+ */
+export interface RiderLookup {
+  status_id: string;
+  student_name: string;
+  route_name: string;
+  route_kind: RouteType;
+  driver_name: string;
+  hub_name: string;
+  rider_status: RiderStatus;
+  is_mine: boolean;
+}
+
 /** What `identify_boarding_code()` returns for a code the driver cannot board. */
 export interface BoardingCodeOwner {
   student_name: string;
@@ -212,6 +294,14 @@ export interface TripStopProgress {
   stop_id: string;
   arrived_at: string | null;
   departed_at: string | null;
+  /**
+   * The driver left this stop with somebody still unaccounted for. The database
+   * refuses the write unless this is set, and setting it files an incident per
+   * affected child — see `guard_stop_departure()` in supabase/schema.sql.
+   */
+  departed_with_unresolved: boolean;
+  /** Nobody was due here today, so the van never stopped. */
+  skipped: boolean;
 }
 
 export interface ChangeRequest {
@@ -269,6 +359,18 @@ export interface AppNotification {
   kind: string;
   read_at: string | null;
   created_at: string;
+  /**
+   * S6: what actually happened when this was pushed. Before, a user with no
+   * push token produced no row, no retry and no trace — so "we sent it" was
+   * unfalsifiable.
+   */
+  delivery_state: 'pending' | 'sent' | 'no_token' | 'failed';
+  delivery_detail: string | null;
+  delivered_at: string | null;
+  /** The urgent kinds are not delivered until a person says they saw them. */
+  requires_ack: boolean;
+  acknowledged_at: string | null;
+  acknowledged_by: string | null;
 }
 
 export interface Announcement {
@@ -399,6 +501,45 @@ export const FINAL_STATUSES: RiderStatus[] = [
 ];
 
 export const isFinal = (s: RiderStatus) => FINAL_STATUSES.includes(s);
+
+/**
+ * The statuses that mean "this child is not travelling with us today".
+ *
+ * All three are final, so the driver's normal boarding buttons are gone — which
+ * is correct right up until the child is standing at the door. Then the app has
+ * no way to record what everyone can see, the driver takes them anyway (of
+ * course they do), and the record says the van is not carrying a child it is
+ * carrying. That is the exact state this app exists to prevent, so boarding from
+ * here has to be RECORDABLE rather than prevented: see "Boarding anyway" on the
+ * driver's trip screen, and `guard_boarding_after_away()` in the schema, which
+ * refuses it without a note.
+ */
+export const AWAY_STATUSES: RiderStatus[] = ['absent', 'parent_pickup', 'no_show'];
+
+export const isAway = (s: RiderStatus) => AWAY_STATUSES.includes(s);
+
+/**
+ * Who has no outcome yet at a stop the van is about to leave.
+ *
+ * MIRRORS `riders_unresolved_at_stop()` in supabase/schema.sql, which is what
+ * actually enforces this — the database refuses the departure. This copy exists
+ * so the app can warn the driver and name them BEFORE the write, and offer the
+ * outcome inline, instead of surfacing a Postgres error under a card. If the
+ * rule changes, it changes in both places.
+ *
+ * A rider sits at two stops. Boarding here, they are unresolved while still
+ * `scheduled` (never seen) or `waiting` (they said they were at the hub and the
+ * van is leaving without them). Getting off here, they are unresolved while
+ * still on board. `unable_to_drop_off` is not unresolved: it is already raised,
+ * it already blocks the trip closing, and the driver is meant to drive on.
+ */
+export function unresolvedAtStop(riders: StudentTripStatus[], stopId: string) {
+  return riders.filter(
+    (r) =>
+      (r.pickup_stop_id === stopId && ['scheduled', 'waiting'].includes(r.status)) ||
+      (r.dropoff_stop_id === stopId && ['boarded', 'in_transit'].includes(r.status)),
+  );
+}
 
 /**
  * How a change request's dates read in the UI: "Wed 12 Aug", or "12 Aug – 30 Aug

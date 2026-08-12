@@ -8,6 +8,7 @@ import {
   CHANGE_LABEL,
   RIDER_STATUS_LABEL,
   RIDER_STATUS_TONE,
+  WATCHDOG_LABEL,
   formatDateSpan,
   isFinal,
 } from '../../src/lib/types';
@@ -18,6 +19,7 @@ import type {
   Profile,
   RiderStatus,
   StudentTripStatus,
+  WatchdogAlert,
 } from '../../src/lib/types';
 import {
   Badge,
@@ -63,22 +65,26 @@ export default function StaffExceptions() {
   const [requests, setRequests] = useState<ChangeRequest[]>([]);
   const [assignmentReqs, setAssignmentReqs] = useState<AssignmentRequest[]>([]);
   const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [alerts, setAlerts] = useState<WatchdogAlert[]>([]);
   const [people, setPeople] = useState<Profile[]>([]);
   const [error, setError] = useState('');
+  const [checking, setChecking] = useState(false);
 
   const [overriding, setOverriding] = useState<string | null>(null);
   const [reason, setReason] = useState('');
 
   const load = useCallback(async () => {
-    const [{ data: cr }, { data: ar }, { data: inc }, { data: pr }] = await Promise.all([
+    const [{ data: cr }, { data: ar }, { data: inc }, { data: wd }, { data: pr }] = await Promise.all([
       supabase.from('change_requests').select('*').eq('approval', 'pending').order('created_at'),
       supabase.from('assignment_requests').select('*').eq('status', 'pending').order('created_at'),
       supabase.from('incidents').select('*').is('resolved_at', null).order('created_at', { ascending: false }),
+      supabase.from('watchdog_alerts').select('*').is('resolved_at', null).order('raised_at', { ascending: false }),
       supabase.from('profiles').select('*'),
     ]);
     setRequests((cr as ChangeRequest[]) ?? []);
     setAssignmentReqs((ar as AssignmentRequest[]) ?? []);
     setIncidents((inc as Incident[]) ?? []);
+    setAlerts((wd as WatchdogAlert[]) ?? []);
     setPeople((pr as Profile[]) ?? []);
   }, []);
 
@@ -167,6 +173,43 @@ export default function StaffExceptions() {
     await reload();
   }
 
+  /**
+   * Run the watchdog now, rather than waiting up to five minutes for cron.
+   *
+   * Worth having as a button because the honest answer to "is anything wrong
+   * right now?" should not depend on where you are in the cron cycle — and
+   * because on a project where pg_cron was never enabled, this is the only way
+   * it runs at all.
+   */
+  async function checkNow() {
+    setChecking(true);
+    setError('');
+    const { error: e } = await supabase.rpc('transport_watchdog');
+    setChecking(false);
+    if (e) {
+      setError(e.message);
+      return;
+    }
+    await load();
+  }
+
+  async function resolveAlert(alert: WatchdogAlert) {
+    setError('');
+    const { error: e } = await supabase
+      .from('watchdog_alerts')
+      .update({
+        resolved_at: new Date().toISOString(),
+        resolved_by: profile?.id,
+        resolution: `Acknowledged by ${profile?.full_name ?? 'the office'}.`,
+      })
+      .eq('id', alert.id);
+    if (e) {
+      setError(e.message);
+      return;
+    }
+    await load();
+  }
+
   async function resolveIncident(id: string) {
     await supabase
       .from('incidents')
@@ -179,6 +222,8 @@ export default function StaffExceptions() {
 
   const stuck = rows.filter((r) => r.status === 'unable_to_drop_off');
   const noShows = rows.filter((r) => r.status === 'no_show');
+  const checkedInNoShows = noShows.filter((r) => r.check_in_time);
+  const plainNoShows = noShows.filter((r) => !r.check_in_time);
   // Students on a trip that already ran but who never got an outcome.
   const missing = rows.filter((r) => {
     const trip = trips.find((t) => t.id === r.trip_id);
@@ -191,7 +236,8 @@ export default function StaffExceptions() {
     !missing.length &&
     !requests.length &&
     !assignmentReqs.length &&
-    !incidents.length;
+    !incidents.length &&
+    !alerts.length;
 
   const schoolName = (id: string | null) => ref.schoolOf(id)?.name ?? 'Not set';
   const hubName = (id: string | null) => ref.hubOf(id)?.name ?? 'Not set';
@@ -264,7 +310,48 @@ export default function StaffExceptions() {
 
       <ErrorText>{error}</ErrorText>
 
+      {/*
+        The watchdog goes FIRST, above everything a person had to report.
+
+        Every other section on this screen exists because somebody tapped
+        something. These are the ones nobody tapped — the trip that never
+        started, the child still stood at the hub. They are the only items here
+        that arrived without a human noticing first, which is exactly why they
+        belong at the top.
+      */}
+      {alerts.length > 0 ? (
+        <>
+          <SectionLabel>Noticed by the watchdog — nobody reported these</SectionLabel>
+          {alerts.map((a) => (
+            <Card key={a.id} style={styles.urgent}>
+              <Row style={styles.between}>
+                <View style={styles.grow}>
+                  <Text style={styles.name}>{WATCHDOG_LABEL[a.kind]}</Text>
+                  <Text style={styles.fine}>
+                    Raised {new Date(a.raised_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                  </Text>
+                </View>
+                <Badge label="Unattended" tone="danger" />
+              </Row>
+              <Text style={styles.body}>{a.detail}</Text>
+              <Button
+                label="I have dealt with this"
+                variant="secondary"
+                onPress={() => resolveAlert(a)}
+              />
+            </Card>
+          ))}
+        </>
+      ) : null}
+
       {nothing ? <Empty>Nothing outstanding. The day is clean.</Empty> : null}
+
+      <Button
+        label={checking ? 'Checking…' : 'Check for anything unreported'}
+        variant="ghost"
+        loading={checking}
+        onPress={checkNow}
+      />
 
       {stuck.length > 0 ? (
         <>
@@ -353,10 +440,31 @@ export default function StaffExceptions() {
         </>
       ) : null}
 
-      {noShows.length > 0 ? (
+      {/*
+        S2: a no-show AFTER a check-in is a different emergency from a no-show
+        from nothing. The first means the child told us they were at the hub and
+        then was not picked up — somebody should be looking for them right now.
+        The second usually means they stayed home and nobody said. Same status,
+        because splitting it would double every downstream branch; different
+        urgency, and different position on this screen.
+      */}
+      {checkedInNoShows.length > 0 ? (
+        <>
+          <SectionLabel>Checked in, then not picked up</SectionLabel>
+          <Card style={styles.urgent}>
+            <Text style={styles.urgentBody}>
+              These students told the app they were at the hub, and the driver then recorded a
+              no-show. Nobody knows where they are. Call the parent first.
+            </Text>
+          </Card>
+          {checkedInNoShows.map((r) => renderRow(r, 'danger'))}
+        </>
+      ) : null}
+
+      {plainNoShows.length > 0 ? (
         <>
           <SectionLabel>No-shows</SectionLabel>
-          {noShows.map((r) => renderRow(r, 'warn'))}
+          {plainNoShows.map((r) => renderRow(r, 'warn'))}
         </>
       ) : null}
 

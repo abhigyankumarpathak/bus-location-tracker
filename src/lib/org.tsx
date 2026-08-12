@@ -33,6 +33,12 @@ export function useFeatures() {
     // 'manual' is the only mode actually built; 'scan' is reserved for NFC/QR
     // self check-in later. Defaults to manual so nothing changes until it ships.
     attendanceMode: org?.attendance_mode ?? 'manual',
+    /**
+     * How long a driver has to take back a mistap. The screen uses this to
+     * decide whether to OFFER undo; the database enforces the real window
+     * against the audit log, so a stale client cannot talk its way past it.
+     */
+    undoWindowSec: org?.undo_window_sec ?? 90,
   };
 }
 
