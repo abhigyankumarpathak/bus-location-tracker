@@ -3,7 +3,7 @@ import { useFocusEffect } from 'expo-router';
 import { Alert, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../../src/lib/auth';
 import { supabase } from '../../src/lib/supabase';
-import { useReference, useTripStatuses } from '../../src/lib/hooks';
+import { sweepIfDue, useReference, useTripStatuses } from '../../src/lib/hooks';
 import {
   RIDER_STATUS_LABEL,
   RIDER_STATUS_TONE,
@@ -101,7 +101,9 @@ export default function StaffExceptions() {
 
   useFocusEffect(
     useCallback(() => {
-      load();
+      // Sweep first, then read — otherwise the screen shows a stale queue and
+      // the coordinator has to press the button to see what is actually wrong.
+      sweepIfDue().then(load);
     }, [load]),
   );
 
@@ -119,6 +121,7 @@ export default function StaffExceptions() {
     setChecking(true);
     setError('');
     const { error: e } = await supabase.rpc('transport_watchdog');
+    await supabase.rpc('send_arrival_alerts');
     setChecking(false);
     if (e) {
       setError(e.message);

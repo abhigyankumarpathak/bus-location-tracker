@@ -308,6 +308,14 @@ live data and idempotent. Run them in filename order:
 
 1. `2026-08-12-c4-c1-s9.sql`
 2. `2026-08-12b-c2-c5-c6-c7-c8-and-the-s-n-series.sql`
+3. `2026-08-12c-stale-note.sql` — one function. **Only needed if you applied
+   1 and 2 before this file existed;** they now contain the fix themselves.
+
+Then paste **`supabase/patches/verify.sql`** into the SQL editor. It checks every
+table, column, function and trigger the patches create — plus that the C4 guard
+is the *fixed* version, which no existence check would catch — and sorts anything
+missing to the top. "Success. No rows returned" is what the editor prints for any
+DDL, so it is not evidence of anything on its own.
 
 ---
 

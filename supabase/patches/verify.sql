@@ -34,7 +34,10 @@ with expected(kind, name, label) as (values
   ('trigger','on_rider_transition',        'C8 · transition guard'),
   ('trigger','on_boarding_after_away',     'C4 · note required'),
   ('trigger','on_stop_departed',           'S7 · departure notification'),
-  ('trigger','on_announcement_posted',     'N5 · targeted fan-out')
+  ('trigger','on_announcement_posted',     'N5 · targeted fan-out'),
+  -- Not "does it exist" but "is it the FIXED one". Patch 3 rewrote this
+  -- function; the stale-note bug is invisible to an existence check.
+  ('body',   'guard_boarding_after_away|is not distinct from', 'C4 · stale-note fix (patch 3)')
 )
 select
   case when found then '✅ OK  ' else '❌ MISSING' end as status,
@@ -55,6 +58,11 @@ from (
         where n.nspname = 'public' and p.proname = e.name)
       when 'trigger' then exists (
         select 1 from pg_trigger where tgname = e.name and not tgisinternal)
+      when 'body' then exists (
+        select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public'
+          and p.proname = split_part(e.name, '|', 1)
+          and pg_get_functiondef(p.oid) like '%' || split_part(e.name, '|', 2) || '%')
       else false
     end as found
   from expected e
