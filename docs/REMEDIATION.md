@@ -83,6 +83,18 @@ during operating hours only.
 converts every silent failure in the system into an alert, including ones not
 enumerated here.
 
+**As built, two departures from the above.** It has **six** checks, not five —
+the sixth is an urgent notification nobody has acknowledged (S6). And it runs
+**all day**, not "operating hours only": a cron window is expressed in the
+database's timezone, so `6-19 * * 1-5` on a UTC project covers 02:00–15:59 in New
+York and misses the afternoon run entirely. The restriction was there to avoid
+3am noise, but the function is naturally silent when nothing is scheduled —
+nothing is overdue at 3am — so the window bought nothing and cost a timezone bug.
+
+It also alerts **once per breach** and **clears itself** when the condition goes
+away, neither of which the plan asked for. A queue full of alerts about things
+that resolved themselves is a queue nobody reads.
+
 ---
 
 ## Phase 2 — correction paths
@@ -308,10 +320,26 @@ that is not**, and it is deliberately last for the reason the plan itself gives.
 
 **Found while doing the above, and fixed**
 
+None of these were in the review's 22. All were found by building the fixes, or
+by running the result end to end.
+
+- [x] **The vans are not in UTC.** `planned_arrival` and `planned_departure` are wall-clock `time` columns; every comparison resolved in the *database's* timezone, which on Supabase is UTC. For an operation in New York that is a **four-hour error** hitting the watchdog, the arrival alerts, the change cutoff and the check-in window simultaneously — a 07:15 pickup was evaluated as 03:15 local. Now `organization.time_zone` + `local_ts()`, settable in Setup. Both cron windows were wrong for the same reason and now run all day.
+- [x] **The C4 note could be a stale one.** The guard required "note is not empty", but `note` is one column shared by every writer and `apply_change_request()` already puts the *absence reason* in it. A child marked absent with reason "Ill." could be boarded with no explanation, and the parent would have been told *"Ill. Boarded at 3:42 PM"* — the absence reason presented as the driver's reason for carrying them. The note must now be non-empty **and changed by this write**. Found only by the end-to-end run.
+- [x] **Patch 2 re-installed its own copy of a function over patch 1's**, so fixing patch 1 alone silently did nothing.
+- [x] **Applying the SQL before deploying the app broke trip generation.** S8 revokes `ensure_daily_trips` from `authenticated`; an older bundle still calling it got permission denied, and `ensureTodaysTrips` swallowed the error. Deploy order matters: app first, or accept a gap.
 - [x] `notify_on_incident()` broadcast every incident's description to every guardian on the route — with C1 filing per-child incidents that would have named the left-behind child to every other family
 - [x] `schema.sql` could not be re-run — `trip_stop_progress` and `assignment_requests` were missing from the drop list
 - [x] `select coalesce(…) into` left variables NULL when no row matched, nulling whole notification bodies
 - [x] The watchdog would have false-alarmed on **every afternoon run** — the school is the origin the driver never marks arrival at
+
+**How it is verified**
+
+`supabase/patches/flow-test.sql` runs a whole school day — morning and afternoon
+— against a real Postgres and asserts at every step. **36 assertions**, on a
+fresh `schema.sql`, on a clean install from the patches, and on an upgrade of a
+database that had already applied the earlier ones. `supabase/patches/verify.sql`
+checks a live database has all 29 objects, including that two functions are the
+*fixed* versions rather than merely present.
 
 ### On C3
 
@@ -326,9 +354,12 @@ because the failure mode is a boarding record that arrives in the wrong order or
 not at all. The plan budgets 2–3 days and calls the risk *medium*. It should get
 that, not an afternoon.
 
-It also has a live dependency in **Still unanswered** below: *cell coverage
-across the whole route* decides whether C3 is a safeguard or load-bearing, and
-that changes how much of it is worth building.
+That dependency is now answered: coverage is good, with **two known dead spots**.
+So C3 is a safeguard rather than the backbone — but a bounded one. The outbox has
+to survive two stops' worth of actions, and the watchdog thresholds have to
+exceed the longest dead-spot crossing or the office gets a false alarm on every
+run through them. **Nobody has timed those two spots yet**, and that number is
+the input to both.
 
 ## Answered — 12 August 2026
 

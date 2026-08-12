@@ -688,7 +688,14 @@ Nothing here is hidden elsewhere in this document.
 6. **No `companyId`** — single-tenant. The expensive one to change later.
 7. **NFC not built.** The `attendance_mode` flag has two values, `manual` and
    `scan`, and `scan` means QR. QR needs no hardware and works on every phone.
-8. **No SMS fallback.** Urgent notifications now record delivery and demand
+8. **Times are wall-clock, and the timezone is a setting.** `planned_arrival`
+   and `planned_departure` carry no zone; `organization.time_zone` says what
+   clock they are on and everything resolves through `local_ts()`. Set it in
+   Setup → Watchdog. Left on the UTC default while the vans run elsewhere, the
+   watchdog, the arrival alerts, the change cutoff and the check-in window are
+   all wrong by the same number of hours. There is a warning in the UI while it
+   is still on the default.
+9. **No SMS fallback.** Urgent notifications now record delivery and demand
    acknowledgement, and the watchdog escalates silence to the office — but the
    final hop is still a person picking up a phone, not an automated SMS. That
    needs a provider decision.
@@ -733,6 +740,15 @@ That is what caught the one bug the individual tests could not — see the
 stale-note fix in the changelog. Every guard was correct alone; the defect only
 existed when a parent's absence reason and a driver's boarding note met in the
 same column.
+
+The same suite runs under two timezone settings and **shows a different result**
+for each: 36/36 with the operation's zone set correctly, and a failing
+arrival-alert assertion when it is left on UTC. A test that passes either way
+would not be testing anything.
+
+`supabase/patches/verify.sql` is the companion for a live database: 29 checks
+that every table, column, function and trigger exists — and, for the two
+functions that were fixed rather than added, that the body is the corrected one.
 
 ## The rider state machine
 
