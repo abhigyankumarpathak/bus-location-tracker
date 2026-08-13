@@ -440,7 +440,7 @@ A design review of the ride flow came first (see
 [docs/REMEDIATION.md](docs/REMEDIATION.md) for what it found and what is still
 outstanding). Four things were built off the back of it.
 
-**Morning arrival at school is now one tap, and names the exceptions**
+**S3 — morning arrival at school is now one tap, and names the exceptions**
 
 - The driver gets **“All N dropped off safely”** at any stop where two or more
   riders are still on board — in practice, the morning arrival at school.
