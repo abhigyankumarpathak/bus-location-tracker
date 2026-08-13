@@ -39,9 +39,14 @@ never raised. This document answers "does it match the brief"; that one answers
 > *child* is, only where a *vehicle* is. That is the entire trade — you give up
 > the custody record, and in exchange nothing can be wrong about a child.
 >
-> **Status: specified, not built.** Scope, data shape and build order live in
-> [`.claude/skills/barebone/SKILL.md`](../.claude/skills/barebone/SKILL.md).
-> Say the word and it starts at phase 1.
+> **Status: being built — phase 3 of 6, as of 13 August 2026.** It exists as
+> code, in `bus-tracking-app-lite/`. Accounts work, and an admin can describe the
+> whole operation — buses and their tracker keys, stops, the order a bus passes
+> them, and who watches which one — and see it on a map. Nothing reports a
+> position until phase 4, so no bus is on that map yet, and the parent and student
+> screens are still placeholders. Scope, data shape and build order are in
+> [`.claude/skills/barebone/SKILL.md`](../.claude/skills/barebone/SKILL.md); what
+> is actually finished is in that project's own README, CHANGELOG and FEATURES.
 
 Three symbols throughout:
 
@@ -75,7 +80,9 @@ have not been driven end-to-end with real accounts yet.
 
 **Runs on all three platforms** from one codebase: `npx expo run:ios`,
 `npx expo run:android`, `npm run web`. The web build is what lets a coordinator
-work at a desk, which is what §7.3 was really asking for.
+work at a desk, which is what §7.3 was really asking for — and since
+13 August 2026 it has a **real map** in it, drawn with Leaflet, rather than the
+route diagram it used to show. Maps were the last thing the browser could not do.
 
 **Two features are built but switched off**, because the blueprint excludes them:
 live GPS and payments. "Switched off" here means a flag, not a stub — as of
@@ -460,6 +467,7 @@ the same trip data and were easier to get right together.
 | Backend logic | Cloud Functions | **Postgres triggers + Edge Functions** | The trip-close guard, the cutoff decision, and the audit log are triggers, so **no write path can bypass them**. As Cloud Functions they would be application code that another path could route around. |
 | Notifications | In-app, then FCM | In-app + Expo Push | Same shape. |
 | Maps | Hub pins only; GPS postponed | Hub pins by default; live van **behind a flag** | As instructed — and the flag is now wired end to end rather than reserved, so the decision to enable it is a policy call, not a build. |
+| The map itself | — | `expo-maps` on iOS and Android, **Leaflet on web** | One component, `Map.tsx`, with a `Map.web.tsx` beside it that Metro resolves first for web. `expo-maps` has no web implementation at all — importing it in a browser throws at module load — so the split is not a preference, it is the only thing that makes a coordinator's browser map possible. Since 13 August the web half is a real slippy map with dark tiles, numbered stop pins and the van on it; before that it was a diagram of the route order. |
 
 ### Cost
 

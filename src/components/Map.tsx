@@ -19,6 +19,15 @@ export interface MapMarker {
   title: string;
   /** Buses render distinctly from stops. */
   kind?: 'bus' | 'stop' | 'pickup';
+  /**
+   * A short overlay drawn *on* the pin — in practice the stop's `seq`.
+   *
+   * Web only, and read by `Map.web.tsx` alone: neither native map can draw text
+   * on a marker, and neither needs to, because the titles this app passes are
+   * already numbered. It lives here so the two declarations of this interface
+   * stay identical, which is the only thing keeping them one component.
+   */
+  badge?: string;
 }
 
 interface MapProps {

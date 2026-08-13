@@ -17,6 +17,94 @@ Newest first.
 
 ## 13 August 2026
 
+### A real map in the browser
+
+The web build now draws an actual map. Until today it drew a **diagram** — the
+route as an ordered line of dots down a rail, with a note telling the reader that
+maps render on the phone app. Honest, and useless to the transport office, which
+runs on the web build.
+
+`src/components/Map.web.tsx` is now [Leaflet](https://leafletjs.com), about 300
+lines of it, with **the seam it replaced left exactly where it was**. That seam is
+the whole reason web works at all: `expo-maps` has no web implementation, and
+`Map.tsx` imports it at the top of the file, so on web that import throws the
+moment a screen mounts — a blank white page, because the component never gets far
+enough to render its own fallback. Metro resolves `Map.web.tsx` first when
+bundling for web, which is what keeps `expo-maps` out of the web bundle and
+Leaflet out of the native one. A runtime `Platform.OS` check would not do it;
+Metro resolves imports at build time.
+
+What is on it, on `app/(parent)/map.tsx`:
+
+- **Tiles**, from CARTO's dark basemap, which sits on the app's own near-black
+  rather than fighting it. Free, with attribution — the credit line is in the
+  corner and moves with the URL if the provider ever changes.
+- **Numbered stop pins.** The stop's position in the run rides *on* the pin, not
+  in a popup you have to click. The parent's own hub is the accent-coloured one.
+- **The route line**, in order, through the stops.
+- **The van**, orange, with a pulse, drawn over the stops rather than under them —
+  and still left off entirely when its last fix is stale, which has not changed.
+
+Three things worth knowing about how it behaves:
+
+**The camera is not driven from props, and that is deliberate.** `Map.tsx` on a
+phone re-points whenever `center` changes. A browser map is something you pan and
+zoom with a mouse, and re-centring on every van fix snatches it back from whoever
+is reading it. So the view frames the **stops**, keyed on the stops alone, and
+then follows the van only once it has actually left the visible area. The first
+framing includes the van, so the small map under a live ETA opens with both the
+van and the hub in shot.
+
+**The wheel does not zoom until you click the map.** Every screen carrying a map
+is one long scrolling page, and a map that grabs the wheel traps the reader
+halfway down it.
+
+**Stop names are staff-entered, and Leaflet renders popup content as HTML.** The
+labels go in as text nodes, and the numbers on the pins are escaped, so a stop
+named after someone's idea of a joke cannot inject anything.
+
+The one change outside the web file is an optional `badge?: string` on
+`MapMarker`, set from `stop.seq`. It is read by the web map alone — neither native
+map can draw text on a marker, and neither needs to, because the titles this app
+passes are already numbered. It is declared in both files because those two
+declarations being identical is the only thing making them one component.
+`Map.tsx`'s rendering is untouched, and so is the stop list under the map: the map
+replaced the rail diagram, not the addresses.
+
+Verified, rather than assumed: `expo export -p web` emits a
+`_expo/static/css/leaflet-*.css` that `index.html` links, and the tile URL is in
+the JS bundle; `expo export -p ios` contains **no Leaflet at all**, which is the
+proof that the `.web.tsx` seam is doing its job. Typecheck is clean — `leaflet.css`
+needed a `declare module '*.css'` in a new root `globals.d.ts`, because Metro
+bundles the import happily and TypeScript does not know what it is.
+
+> One thing to remember if `app.json` ever changes. `web.output` is `"single"`, a
+> client-rendered SPA, which is why Leaflet touching `document` at module load is
+> fine. **Change it to `"static"` and the top-level `import L from 'leaflet'` has
+> to move behind a dynamic `import()`**, or the prerender crashes.
+
+### The barebone alternative, built
+
+Nothing in this application changed. The alternative specified earlier today —
+see the entry below — now **exists as code**, in `bus-tracking-app-lite/`, the
+sibling directory that was created empty this morning.
+
+It is at **phase 3 of the six** its build order lays out. Accounts work, with the
+same invite-code signup and RLS proven by attacking it directly; an admin can
+describe the whole operation — buses and their tracker keys, stops, the order a
+bus passes them, and who watches which one — and see the stops and the run on a
+map, on a phone or in a browser. No *bus* is on that map yet: nothing reports a
+position until phase 4, and the parent and student screens are still placeholders.
+
+Three roles against six. Eleven tables against twenty-five. No driver in the app
+at all.
+
+This repository is unchanged and nothing here is switched off — the two are
+separate products, not a branch and not a feature flag. Lite keeps its own README,
+CHANGELOG, FEATURES and SETUP, and lite changes do not appear in this changelog.
+The pointer in [FEATURES](docs/FEATURES.md) is still the entire relationship
+between the two; all that changed there is that it no longer says "not built".
+
 ### A barebone alternative, specified
 
 Nothing in the application changed. What landed is a **specification for a second,
