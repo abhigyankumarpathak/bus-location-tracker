@@ -15,6 +15,55 @@ Newest first.
 
 ---
 
+## 13 August 2026
+
+### A barebone alternative, specified
+
+Nothing in the application changed. What landed is a **specification for a second,
+much smaller product**, and a note in [FEATURES](docs/FEATURES.md) saying it
+exists.
+
+The full platform is a custody-of-children system: nine rider statuses, driver-
+confirmed boarding, an end-of-trip checklist the database refuses to skip, a
+watchdog on the clock. The alternative answers **one question** — *where is the
+bus, and when does it reach my stop* — and deliberately answers nothing else.
+
+Kept: sign-in for parents, students and admins; invite codes that carry the role;
+an admin assigning each student a bus and a stop, and marking the stops they do
+not use; RLS on everything.
+
+Gone: **the driver role entirely**, and with it rider statuses, boarding
+confirmation, QR scanning, the end-of-trip checklist, trips, route templates, the
+watchdog, change requests, the coordinator role, incidents, and the weekly purge.
+Five roles become three. Around twenty-five tables become seven.
+
+The live position comes from **a GPS tracker fitted to the van**, not a phone —
+which is what makes "no driver" coherent, since no human has to remember to open
+anything. `ingest-location` already accepts exactly that POST and comes across
+largely unchanged. There are **no trips and no schedule**: a bus, an ordered list
+of stops, and three notifications derived from the live fix — 15 minutes away,
+5 minutes away, and *the bus is at your stop*.
+
+It is a **separate project** — `bus-tracking-app-lite/`, a sibling directory to
+this one, created empty today — not a branch and not a feature flag, so this
+codebase is untouched and nothing here is switched off. Choosing it is choosing a
+different product: it never claims to know where a *child* is, only where a
+*vehicle* is.
+
+It **mirrors this project's layout** — same `app/` route groups, same
+`src/lib` + `src/components` split, same `supabase/` shape — with things removed
+rather than rearranged, so porting stays mechanical. And it keeps **its own
+README, CHANGELOG, FEATURES and SETUP**: lite changes never appear in this
+changelog, and this repo is read-only for that work. The single pointer in
+[FEATURES](docs/FEATURES.md) is the entire relationship between the two.
+
+Written up in [`.claude/skills/barebone/SKILL.md`](.claude/skills/barebone/SKILL.md)
+as an invocable skill, with the scope boundary, the data sketch, the alerting
+rules, a six-phase build order, and five questions still open. **No code, no
+schema, no project directory yet** — say the word and it starts at phase 1.
+
+---
+
 ## 12 August 2026
 
 ### The vans are not in UTC

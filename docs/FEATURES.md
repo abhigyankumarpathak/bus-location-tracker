@@ -6,12 +6,42 @@ A feature-by-feature account of the app as it stands, checked against the
 Written to be read by someone who has the blueprint in front of them and wants to
 know: *did they build what we asked for, and where did they not?*
 
-**Last updated 10 August 2026.** Two companion documents:
+**Last updated 13 August 2026.** Two companion documents:
 [CHANGELOG](../CHANGELOG.md) for what changed when, and
 [REMEDIATION](REMEDIATION.md) for problems a flow review found that the blueprint
-never raised — including four where a child can go unaccounted for and nobody is
-alerted. This document answers "does it match the brief"; that one answers "is the
-brief enough".
+never raised. This document answers "does it match the brief"; that one answers
+"is the brief enough".
+
+> ## ⚡ You can switch to a LITE version instead of this one
+>
+> **This document describes the FULL platform only.** There is a second, much
+> smaller product available as an alternative — and switching to it is a live
+> option, not a hypothetical.
+>
+> | | **Full** (this document) | **Lite** |
+> | --- | --- | --- |
+> | Answers | *Where is my child, and who has them?* | *Where is the bus, and when does it reach my stop?* |
+> | Roles | 5 — student, parent, driver, coordinator, admin | 3 — student, parent, admin |
+> | Driver app | Yes — boarding, drop-off, the whole custody record | **None.** No driver in the app at all |
+> | Rider statuses | 9, with an enforced transition table | **None.** Nothing tracks a child |
+> | Position from | The driver's phone | **A GPS tracker fitted to the van** |
+> | Tables | ~25 | ~7 |
+> | Families can | Check in, report absences, see the full timeline | **Watch. Nothing else.** |
+> | Alerts | 15 min, 5 min, plus boarding/drop-off/delay/exception | 15 min, 5 min, **and “the bus is at your stop”** |
+>
+> Lite is **not a reduced build of this app and not a feature flag.** It is a
+> separate project in `bus-tracking-app-lite/`, a sibling directory, with its own
+> schema — and **its own README, CHANGELOG and FEATURES**. Nothing in this repo
+> changes and nothing here is switched off. If you switch, this app keeps working
+> exactly as documented below; you simply run the other one.
+>
+> Choosing lite is choosing a different product: it never claims to know where a
+> *child* is, only where a *vehicle* is. That is the entire trade — you give up
+> the custody record, and in exchange nothing can be wrong about a child.
+>
+> **Status: specified, not built.** Scope, data shape and build order live in
+> [`.claude/skills/barebone/SKILL.md`](../.claude/skills/barebone/SKILL.md).
+> Say the word and it starts at phase 1.
 
 Three symbols throughout:
 
@@ -306,8 +336,9 @@ because it blocks the trip from closing.
 | **Today's Trips** — start time, vehicle, status | ✅ |
 | **Trip Overview** — ordered stops, student count, capacity, planned times, Start Trip, Report Delay | ✅ |
 | **Stop Roster** — students at each stop with name, status, actions | ⚠️ No **photo or initials**. The blueprint asks for a photo; storing children's photographs is a privacy decision that should not be made by a developer on a whim, so it is left out pending your call. |
-| **Student Action** — Boarded, Absent, No-Show, Parent Pickup, Dropped Off Safely, Unable to Drop Off | ✅ All six |
+| **Student Action** — Boarded, Absent, No-Show, Parent Pickup, Dropped Off Safely, Unable to Drop Off | ✅ All six, plus three added 12 August: **“Boarding anyway — turned up”** for a child the record says is away (a note is required, by the database), **“Boarding here instead”** for a child at the wrong hub on the right van, and a **look-up** for a child who is not on this driver's list at all — which names whose van they belong on without exposing anything else. |
 | **Incident** — type, affected student/vehicle, description, severity | ⚠️ All of that, **except the optional photo** |
+| **Leaving a stop** — the same check as End Trip, eight stops earlier | ✅ Added 12 August. The driver cannot quietly pull away from a child with no outcome: the departure is held and everyone unresolved is listed with their buttons inline. Leaving anyway is always allowed — it files an incident per child and tells their guardians and the office immediately. |
 | **End Trip** — checklist confirming every student has a final status | ✅ **Enforced by the database**, not just checked in the UI |
 
 | Rule | Status |
@@ -315,7 +346,7 @@ because it blocks the trip from closing.
 | Large, simple buttons; discourage interaction while moving | ✅ Large touch targets; the driver gets a stack, not tabs, so there is nothing to browse |
 | Cannot complete a trip with an unresolved student | ✅ *"Cannot end the trip: 2 student(s) still have no final status."* |
 | Unable to Drop Off creates an urgent coordinator exception | ✅ And blocks trip closure until a coordinator resolves it |
-| Corrections after confirmation are staff-only, with an audit reason | ✅ |
+| Corrections after confirmation are staff-only, with an audit reason | ✅ Staff overrides still demand a reason. Since 12 August the driver also gets a **90-second undo** on their own last action — it writes a *compensating* audit entry rather than a silent revert, so the log reads "this happened, then it was taken back". Beyond the window it is staff-only as before. |
 | Driver sees minimum parent contact information | ✅ None, unless there is an exception |
 
 ### 5.2 Coordinator dashboard
@@ -326,7 +357,7 @@ because it blocks the trip from closing.
 | Trip board — driver, vehicle, progress, status | ✅ |
 | Student exceptions — no-show, late change, missing check-in, unable to drop off | ✅ |
 | Assignments — replace driver/vehicle before start, revalidate capacity | ✅ |
-| Communication — route-wide or child-specific notification | ⚠️ Announcements go to **everyone**. Per-route and per-child targeting is not built. |
+| Communication — route-wide or child-specific notification | ✅ Built 12 August. An announcement can target one route — reaching its riders, their guardians and its driver — or everybody. The fan-out is a database trigger, so it cannot be skipped by whatever posts the announcement. |
 | Daily closeout — verify all trips complete and all statuses resolved | ✅ |
 
 ---
