@@ -93,9 +93,11 @@ which is what makes §8's cost-and-battery objection answerable rather than
 ignored.
 
 **QR boarding is built** (`attendance_mode = 'scan'`), on both legs of the day.
-The **driver scans the student**, never the reverse — a code the student scanned
-themselves would be a self-reported boarding, which §2.1 forbids. NFC is not
-built; QR does the same job on every phone with no extra hardware.
+**Students scan a printed card in the van** and board themselves; the driver
+watches a headcount instead of tapping names. This inverted on 26 August 2026 at
+the operator's request — see the section below for what that costs and the three
+checks that narrow it. NFC is not built; QR does the same job on every phone with
+no extra hardware.
 
 **Absences cover a date range.** A month's holiday is one request, not twenty.
 
@@ -537,27 +539,54 @@ first — which is the information §4.2's "Approaching" step was asking for.
 
 Not a switched-off feature — it works, and the office chooses per organisation.
 
-The student's Today screen shows a QR code, one per leg of the day. The driver
-gets **"Scan students on"** at each stop once the van has arrived there, and the
-camera stays open between students.
+**The direction inverted on 26 August 2026.** It used to be the driver scanning a
+code on each student's phone. It is now the student scanning a **printed card in
+the van**, because the operating requirement is to minimise what the driver
+touches, and one driver action per child is not that. Staff print the cards from
+Setup → Fleet.
 
-**The driver scans the student, never the reverse.** A code taped inside the van
-that students scanned themselves would be a *self-reported boarding* — the one
-thing §2.1 forbids, because a child can scan it from the pavement and then miss
-the van. Because the driver's phone does the scanning, the write is still a driver
-write and **no RLS policy changed** to enable any of this.
+The driver's job at a pickup stop is now: **Arrived → watch "9 of 11 aboard" →
+Departed.** Three taps, whatever the headcount.
 
-The code lives on the trip row, not the student, so it differs morning and
-afternoon and yesterday's screenshot is worthless. A code scanned off a
-classmate's phone identifies *that classmate* — the driver sees the wrong name and
-stops.
+**What the inversion costs, stated plainly.** A self-scan is *not* a driver
+observation, and §2.1 makes the driver the official record precisely because a
+child can scan from the pavement and then not get on. Three things narrow that,
+and none of them closes it:
 
-A scan that does not belong to this trip gets a real answer rather than "unknown
-code": `identify_boarding_code()` reports *"Priya rides Route 2 with Sam, not this
-van"*, which is also how a child about to board the **wrong vehicle** gets caught.
+1. The card names a **vehicle**, not a trip. On its own it says nothing and does
+   nothing; every decision is made server-side against the trip that vehicle is
+   running at that second.
+2. It only works while the van is **standing at that student's own stop** —
+   arrived, not yet departed. A photograph of the card is worthless at home, on
+   another day, or at somebody else's hub.
+3. The driver still confirms the departure, and the app still refuses to leave a
+   stop while a rostered student there has no outcome. **That confirmation is what
+   ratifies the scans.**
 
-Marking students on by name still works underneath. A flat phone has no QR and the
-van still has to leave.
+The residual risk is a student scanning from within range and then not boarding.
+The departure confirmation is what catches it, because the driver is looking at a
+count.
+
+**The RLS policy did not change.** A student calling PostgREST directly still
+cannot write `boarded` — `students check in only` still caps them at `waiting`.
+`board_by_vehicle_code()` is `security definer` and is the only door.
+
+**The card is a credential.** `board_code` lives in `vehicle_devices` beside the
+GPS key but is deliberately *not* the GPS key: `ingest-location` accepts
+`device_key` with no user JWT, so a card carrying it would let any rider forge the
+van's position. Admins can reissue a card from Setup when one is photographed.
+
+A student who scans the wrong van is told which one is theirs — *"This is Van 2,
+and you are not on it today. You ride Route 1 with Sam."* — which is also how a
+child about to board the **wrong vehicle** gets caught.
+
+Marking students on by name still works underneath. A flat phone cannot scan and
+the van still has to leave.
+
+*Left over from the old direction:* `boarding_code` on `student_trip_status` and
+`identify_boarding_code()` are unused by any screen. Kept rather than dropped
+because removing a column mid-pilot buys nothing; worth deleting once self-scan
+has survived a term.
 
 ### One tap for the school gate — exception-based drop-off
 

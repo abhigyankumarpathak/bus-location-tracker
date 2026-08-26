@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../../src/lib/auth';
@@ -10,21 +10,17 @@ import {
   RIDER_STATUS_LABEL,
   RIDER_STATUS_TONE,
   ROUTE_TYPE_LABEL,
-  decodeBoardingQr,
   isAway,
   isFinal,
   unresolvedAtStop,
 } from '../../../src/lib/types';
 import type {
-  BoardingCodeOwner,
   IncidentKind,
   Profile,
   RiderLookup,
   RiderStatus,
   StudentTripStatus,
 } from '../../../src/lib/types';
-import { BoardingScanner } from '../../../src/components/BoardingScanner';
-import type { ScanFeedback } from '../../../src/components/BoardingScanner';
 import { GpsDisabled } from '../../../src/components/Disabled';
 import {
   Badge,
@@ -88,9 +84,6 @@ export default function DriverTrip() {
   /** Which rider is being boarded at a stop that is not theirs, and why. */
   const [wrongStopFor, setWrongStopFor] = useState<{ rowId: string; stopId: string } | null>(null);
   const [wrongStopNote, setWrongStopNote] = useState('');
-
-  /** Which stop the scanner is open for. Null = closed. */
-  const [scanStop, setScanStop] = useState<string | null>(null);
 
   /**
    * Which stop the driver tried to leave with somebody unaccounted for. This is
@@ -474,96 +467,6 @@ export default function DriverTrip() {
     );
   }
 
-  /**
-   * Resolve a scanned QR code, for attendance_mode = 'scan'.
-   *
-   * Returning null means "not one of our codes" and the scanner keeps looking
-   * without saying anything. Everything else produces a banner.
-   *
-   * The rule this follows: a scan is a faster way to press Boarded, never a wider
-   * one. Anything the manual buttons would refuse, this refuses too — and says
-   * why, which the manual buttons cannot do because they simply are not there.
-   */
-  const resolveScan = useCallback(
-    async (raw: string): Promise<ScanFeedback | null> => {
-      const parsed = decodeBoardingQr(raw);
-      if (!parsed) return null;
-
-      const row = riders.find((r) => r.id === parsed.rowId);
-
-      // Not on this trip at all. This is the wrong-van case, and it is worth a
-      // round trip to name it: "unknown code" would leave the driver guessing
-      // whether the app is broken or the child is about to board the wrong bus.
-      if (!row) {
-        const { data, error: e } = await supabase.rpc('identify_boarding_code', {
-          code: parsed.code,
-        });
-        if (e) return { tone: 'danger', message: e.message };
-
-        const owner = (data as BoardingCodeOwner[] | null)?.[0];
-        if (!owner) {
-          return { tone: 'danger', message: 'That code is not one of ours. Board them by name.' };
-        }
-        if (!owner.is_today) {
-          return {
-            tone: 'danger',
-            message: `${owner.student_name} is showing a code for ${owner.trip_date}. Ask them to reopen the app.`,
-          };
-        }
-        return {
-          tone: 'danger',
-          message: `${owner.student_name} rides ${owner.route_name} with ${owner.driver_name} — not this van. Do not carry them; call the office.`,
-        };
-      }
-
-      const name = nameOf(row.student_id);
-
-      if (row.boarding_code !== parsed.code) {
-        return {
-          tone: 'danger',
-          message: `${name}'s code is out of date. Ask them to reopen the app, or board them by name.`,
-        };
-      }
-      if (['boarded', 'in_transit'].includes(row.status)) {
-        return { tone: 'warn', message: `${name} is already on board.` };
-      }
-      if (isFinal(row.status)) {
-        return {
-          tone: 'warn',
-          message: isAway(row.status)
-            ? `${name} is recorded as ${RIDER_STATUS_LABEL[row.status]} today. If they have turned up, use “Boarding anyway” on their card — it needs a note.`
-            : `${name} is recorded as ${RIDER_STATUS_LABEL[row.status]} today. Use the roster to change that.`,
-        };
-      }
-      if (row.pickup_stop_id !== scanStop) {
-        // C7: this used to be a dead end — the scanner said no and the manual
-        // buttons are only on their own stop's card, so a child at the wrong hub
-        // on the RIGHT van could not be boarded at all. The driver takes them
-        // anyway and the record says they were never picked up.
-        return {
-          tone: 'warn',
-          message: `${name} normally boards at ${
-            ref.stopName(row.pickup_stop_id) ?? 'another stop'
-          }. Close the scanner and use “Boarding here instead” on their card.`,
-        };
-      }
-
-      const now = new Date().toISOString();
-      const { error: e } = await supabase
-        .from('student_trip_status')
-        .update({ status: 'boarded', board_time: now, updated_by: me, updated_at: now })
-        .eq('id', row.id);
-
-      if (e) return { tone: 'danger', message: e.message };
-
-      // No explicit reload: useTripStatuses follows the table, so the roster
-      // behind the camera is already updating.
-      return { tone: 'success', message: `${name} is on board.` };
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [riders, scanStop, me, ref.stopName, students],
-  );
-
   function confirmUnableToDrop(row: StudentTripStatus) {
     // Blueprint §6.3: the student stays onboard and the coordinator must act.
     // This blocks the trip from closing, so make sure it is not a misfire.
@@ -801,20 +704,23 @@ export default function DriverTrip() {
         // An all-away stop can be left without arriving — there is nobody to see.
         const canDepart = active && !isDestination && !departed && reachable && (arrived || allAway);
 
-        // Who is still waiting to board here, and who is still on board to be
-        // let off here. Both drive the batch actions below.
-        const toBoardHere = atStop.filter(
-          (r) => r.pickup_stop_id === stop.id && !isFinal(r.status) && r.status !== 'boarded' && r.status !== 'in_transit',
-        );
+        // Who is still on board to be let off here. Drives the batch drop-off.
         const toDropHere = atStop.filter(
           (r) =>
             r.dropoff_stop_id === stop.id &&
             ['boarded', 'in_transit'].includes(r.status),
         );
 
-        // Scanning is per stop, so the driver cannot accidentally board a child
-        // against the wrong hub, and only once the van is actually here.
-        const canScan = active && attendanceMode === 'scan' && arrived && !departed && toBoardHere.length > 0;
+        // In scan mode the driver does not board anybody — the students scan the
+        // card in the van and the roster fills in underneath. What the driver
+        // needs is the COUNT, live, so they can see it settle and know when to
+        // pull away. Shown while the van is standing here with people still to
+        // get on.
+        const scanning = attendanceMode === 'scan' && active && arrived && !departed;
+        const aboardHere = atStop.filter(
+          (r) => r.pickup_stop_id === stop.id && ['boarded', 'in_transit'].includes(r.status),
+        ).length;
+        const dueHere = atStop.filter((r) => r.pickup_stop_id === stop.id && !isAway(r.status)).length;
 
         // Two or more people getting off in the same place at the same moment is
         // the case worth batching — overwhelmingly the morning arrival at school.
@@ -1003,20 +909,28 @@ export default function DriverTrip() {
               </Card>
             ) : null}
 
-            {/* Scan students on, when the office has that mode switched on. */}
-            {canScan ? (
+            {/*
+              The headcount, when the office runs scan mode.
+
+              This is the driver's whole job at a pickup stop now: watch the
+              number go up, and pull away when it stops. It is deliberately a
+              count and not a list — a driver looking at eleven names is reading,
+              and a driver looking at "9 of 11 aboard" is checking.
+
+              It is also the thing that ratifies the scans. A self-scan is not a
+              driver observation; this is where a human confirms the van holds
+              who the app says it holds, and the departure below still refuses to
+              go while anyone here has no outcome.
+            */}
+            {scanning && dueHere > 0 ? (
               <Card style={styles.batch}>
                 <Text style={styles.batchTitle}>
-                  {toBoardHere.length} to board {isOrigin ? 'at school' : 'here'}
+                  {aboardHere} of {dueHere} aboard {isOrigin ? 'at school' : 'here'}
                 </Text>
-                <Button
-                  label="Scan students on"
-                  style={styles.action}
-                  onPress={() => setScanStop(stop.id)}
-                />
                 <Text style={styles.fine}>
-                  You scan the code on their phone. The buttons on each student still work if a
-                  phone is flat.
+                  {aboardHere === dueHere
+                    ? 'Everyone due here has scanned on. Check the van matches, then depart.'
+                    : `${dueHere - aboardHere} still to scan. They tap “Scan to board” and point their phone at the card by the door — the buttons on each student below still work if a phone is flat.`}
                 </Text>
               </Card>
             ) : null}
@@ -1455,27 +1369,6 @@ export default function DriverTrip() {
         </Card>
       )}
 
-      {/* Lives outside the stop loop: one camera, opened against one stop. */}
-      <BoardingScanner
-        visible={scanStop !== null}
-        onClose={() => {
-          setScanStop(null);
-          reload();
-        }}
-        onScan={resolveScan}
-        subtitle={
-          scanStop
-            ? `${ref.stopName(scanStop) ?? 'Stop'} · ${
-                riders.filter(
-                  (r) =>
-                    r.pickup_stop_id === scanStop &&
-                    !isFinal(r.status) &&
-                    !['boarded', 'in_transit'].includes(r.status),
-                ).length
-              } still to board`
-            : undefined
-        }
-      />
     </Screen>
   );
 }

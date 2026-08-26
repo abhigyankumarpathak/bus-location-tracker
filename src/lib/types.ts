@@ -288,6 +288,64 @@ export interface RiderLookup {
   is_mine: boolean;
 }
 
+/**
+ * The printed card in the van, which the STUDENT scans to board themselves.
+ *
+ * The payload carries `vehicle_devices.board_code` and nothing else — no trip,
+ * no date, no student. Everything that decides whether a scan counts is
+ * evaluated server-side by `board_by_vehicle_code()` against the trip that
+ * vehicle is running at that second, which is what makes a photograph of the
+ * card worthless away from a live run.
+ *
+ * Deliberately a different prefix from BOARDING_QR_PREFIX: that one was the
+ * old direction (driver scans student) and the two must never be confused by a
+ * scanner pointed at the wrong thing.
+ */
+export const VAN_QR_PREFIX = 'bustracker.van';
+
+export function encodeVanQr(boardCode: string) {
+  return `${VAN_QR_PREFIX}:${boardCode}`;
+}
+
+/** Null when the payload is not one of ours — a random QR code on a lamppost. */
+export function decodeVanQr(raw: string): string | null {
+  const parts = raw.trim().split(':');
+  if (parts.length !== 2 || parts[0] !== VAN_QR_PREFIX) return null;
+  return parts[1] || null;
+}
+
+/**
+ * What `board_by_vehicle_code()` answers with. Never an exception: every one of
+ * these is something a student standing in the rain has to be able to act on.
+ */
+export interface SelfScanResult {
+  ok: boolean;
+  tone: 'success' | 'warn' | 'danger';
+  reason:
+    | 'signed_out'
+    | 'inactive'
+    | 'unknown_code'
+    | 'no_active_trip'
+    | 'wrong_van'
+    | 'not_riding'
+    | 'already_aboard'
+    | 'marked_away'
+    | 'not_boardable'
+    | 'van_departed'
+    | 'van_not_here'
+    | 'boarded';
+  message: string;
+  vehicle?: string;
+}
+
+/** One row of `vehicle_board_codes()` — what Setup needs to print the cards. */
+export interface VehicleBoardCode {
+  vehicle_id: string;
+  label: string;
+  plate: string | null;
+  board_code: string;
+}
+
 /** What `identify_boarding_code()` returns for a code the driver cannot board. */
 export interface BoardingCodeOwner {
   student_name: string;

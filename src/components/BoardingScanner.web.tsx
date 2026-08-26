@@ -7,10 +7,10 @@ import { Button, Card, theme } from './ui';
  * Same reason Map.web.tsx exists: Metro resolves imports at build time, so a
  * runtime Platform check cannot keep a native-only module out of the web bundle.
  *
- * A driver runs a route on a phone, never on a laptop — the web build exists so a
- * coordinator can work at a desk (§7.3). So this is not a degraded scanner, it is
- * a signpost: on web the driver screen still shows every student's Boarded button,
- * which is the same authority by a slower route.
+ * Nobody boards a van from a laptop. The web build exists so a coordinator can
+ * work at a desk (§7.3), and a student who happens to be on it is not at a bus
+ * stop. So this is not a degraded scanner, it is a signpost — and it names the
+ * fallback that always exists, which is the driver boarding them by name.
  */
 
 export interface ScanFeedback {
@@ -23,6 +23,12 @@ interface Props {
   onClose(): void;
   onScan(raw: string): Promise<ScanFeedback | null>;
   subtitle?: string;
+  title?: string;
+  hint?: string;
+  idle?: string;
+  doneLabel?: string;
+  deniedBody?: string;
+  closeOnSuccess?: boolean;
 }
 
 export function BoardingScanner({ visible, onClose }: Props) {
@@ -34,11 +40,11 @@ export function BoardingScanner({ visible, onClose }: Props) {
         <Card style={styles.card}>
           <Text style={styles.title}>Scanning happens on the phone app</Text>
           <Text style={styles.body}>
-            The browser build cannot open a camera for barcode scanning. Board students from the
-            roster instead — every student still has a Boarded button, and it records exactly the
-            same thing a scan would.
+            The browser build cannot open a camera for barcode scanning. Nothing is lost: the
+            driver can always board a student by name from their roster, and that records exactly
+            the same thing a scan would.
           </Text>
-          <Button label="Back to the roster" onPress={onClose} />
+          <Button label="Go back" onPress={onClose} />
         </Card>
       </View>
     </Modal>

@@ -275,7 +275,15 @@ create table vehicles (
 -- gps_enabled is false.
 create table vehicle_devices (
   vehicle_id uuid primary key references vehicles on delete cascade,
-  device_key text unique not null default encode(gen_random_bytes(24), 'hex')
+  device_key text unique not null default encode(gen_random_bytes(24), 'hex'),
+
+  -- The secret behind the PRINTED CARD in the van, which students scan to board
+  -- themselves. Deliberately NOT device_key: ingest-location accepts that one
+  -- with no user JWT, so printing it inside the vehicle would hand every rider
+  -- the ability to forge the van's position. This one boards its holder onto a
+  -- van standing in front of them, and does nothing else. See
+  -- board_by_vehicle_code() for every check that sits behind it.
+  board_code text unique not null default encode(gen_random_bytes(12), 'hex')
 );
 
 create or replace function add_vehicle_device() returns trigger
@@ -1293,6 +1301,11 @@ declare
   body text;
   kind_txt text := new.status::text;
   audience uuid[];
+  -- Who actually made this write. With self-scan boarding the student does, and
+  -- claiming the driver confirmed it at that moment would be untrue -- they
+  -- ratify the count at departure, not at the scan.
+  self_scanned boolean := new.updated_by is not null
+                          and new.updated_by = new.student_id;
 begin
   if new.status = old.status then
     return new;
@@ -1337,7 +1350,13 @@ begin
         ) x;
       else
         title := student_name || ' boarded the vehicle';
-        body  := 'Confirmed by the driver at ' || when_txt || '.';
+        body  := case
+                   when self_scanned then
+                     'Scanned aboard at ' || when_txt
+                     || '. The driver confirms the count before the van leaves.'
+                   else
+                     'Confirmed by the driver at ' || when_txt || '.'
+                 end;
         select array_agg(parent_id) into audience from guardian_links
         where student_id = new.student_id and status = 'accepted';
       end if;
@@ -2850,21 +2869,20 @@ grant execute on function set_arrival_schedule(boolean) to authenticated;
 -- ---------------------------------------------------------------------------
 -- Scan boarding (attendance_mode = 'scan')
 --
--- The student shows a QR code; the DRIVER scans it. Never the other way round.
--- A code posted on the bus that students scan themselves would be a
--- self-reported boarding, which is the one thing §2.1 forbids -- a child could
--- scan from the pavement and be recorded as aboard a van they missed. Because
--- the driver's phone does the scanning, the write is still a driver write, and
--- the RLS policies below are unchanged: scanning is a faster way to press
--- "Boarded", not a new authority to do it.
+-- THE DIRECTION CHANGED ON 26 AUGUST 2026. It used to be the driver scanning a
+-- code on each student's phone. It is now the student scanning a printed card
+-- in the van, because the operator's requirement is to minimise what the driver
+-- touches at all, and one driver action per child is not that. See
+-- board_by_vehicle_code() further down, which is the live path, and the header
+-- on supabase/patches/2026-08-26-self-scan.sql for what the inversion costs and
+-- the three checks that narrow it.
 --
--- The driver's app already holds every rider on its own trip, so the normal
--- scan resolves locally with no round trip. This function exists for the scan
--- that DOESN'T resolve, which is the interesting one: a child at the right hub
--- holding a valid code for a different van. Without it the driver sees "unknown
--- code" and has no idea whether the app is broken or the child is on the wrong
--- bus. Security definer, because answering that question means reading a row
--- the caller deliberately cannot see.
+-- `boarding_code` on student_trip_status and identify_boarding_code() below are
+-- what remains of the old direction. They are UNUSED by any screen as of the
+-- flip. Left in place rather than dropped because removing a column mid-pilot
+-- buys nothing and the wrong-van answer they encode is the same answer
+-- board_by_vehicle_code() now gives the student directly. Worth deleting once
+-- the self-scan model has survived a term.
 -- ---------------------------------------------------------------------------
 
 create or replace function identify_boarding_code(code text)
@@ -2904,6 +2922,240 @@ end;
 $$;
 
 grant execute on function identify_boarding_code(text) to authenticated;
+
+
+-- ---------------------------------------------------------------------------
+-- What staff need to print the boarding cards.
+--
+-- vehicle_devices is admin-read-only, and deliberately so: it holds the GPS
+-- credential. Printing boarding cards is a coordinator's job, so this hands back
+-- the boarding secret ONLY -- never device_key.
+-- ---------------------------------------------------------------------------
+create or replace function vehicle_board_codes()
+returns table (vehicle_id uuid, label text, plate text, board_code text)
+language sql stable security definer set search_path = public as $$
+  select v.id, v.label, v.plate, vd.board_code
+  from vehicles v
+  join vehicle_devices vd on vd.vehicle_id = v.id
+  where is_staff() and v.active
+  order by v.label;
+$$;
+
+revoke execute on function vehicle_board_codes() from public, anon;
+grant execute on function vehicle_board_codes() to authenticated;
+
+-- A printed card can be photographed, and eventually one will be. Rotating is
+-- how that gets fixed, and it has to be reachable without a database console at
+-- the moment somebody notices. Admin only: it invalidates every card in a van.
+create or replace function rotate_board_code(target uuid) returns text
+language plpgsql security definer set search_path = public as $$
+declare
+  fresh text := encode(gen_random_bytes(12), 'hex');
+begin
+  if not is_admin() then
+    raise exception 'Only an administrator can reissue a vehicle boarding code.';
+  end if;
+
+  update vehicle_devices set board_code = fresh where vehicle_id = target;
+  if not found then
+    raise exception 'No such vehicle.';
+  end if;
+
+  insert into audit_logs (entity_type, entity_id, action, reason, changed_by)
+  values ('vehicles', target, 'board_code_rotated',
+          'Boarding code reissued; printed cards for this vehicle no longer work.',
+          auth.uid());
+
+  return fresh;
+end;
+$$;
+
+revoke execute on function rotate_board_code(uuid) from public, anon;
+grant execute on function rotate_board_code(uuid) to authenticated;
+
+
+-- ---------------------------------------------------------------------------
+-- The scan itself: a STUDENT boarding themselves off the card in the van.
+--
+-- Security definer because it has to read the roster of a trip the caller can
+-- only see their own row of, and because the write it makes is one the student's
+-- own RLS policy forbids ("students check in only" caps them at `waiting`).
+-- That policy is NOT being loosened -- a student still cannot mark themselves
+-- boarded by calling PostgREST directly. This function is the only door, and
+-- every check in it is the lock:
+--
+--   * the card names a VEHICLE, and is inert unless that vehicle is mid-route;
+--   * the caller has to be on that vehicle's roster for today;
+--   * the van has to be standing at the caller's OWN stop -- arrived, not yet
+--     departed -- which is what makes a photograph of the card worthless at
+--     home, on another day, or at somebody else's hub;
+--   * an absence already on the record is not silently contradicted.
+--
+-- What it does NOT do is replace the driver. The departure confirmation still
+-- refuses to leave a stop while a rostered student there has no outcome, and
+-- that is what ratifies the scans.
+--
+-- Returns a jsonb verdict rather than raising, because every outcome here is
+-- something a fourteen-year-old standing in the rain has to act on: which van
+-- they should be on, whether to wait, or whether to talk to the driver. A
+-- Postgres exception is not that.
+-- ---------------------------------------------------------------------------
+create or replace function board_by_vehicle_code(code text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  me          uuid := auth.uid();
+  van_id      uuid;
+  van_label   text;
+  trip        daily_trips;
+  rider       student_trip_status;
+  prog        trip_stop_progress;
+  origin_stop uuid;
+  other       record;
+begin
+  if me is null then
+    return jsonb_build_object(
+      'ok', false, 'tone', 'danger', 'reason', 'signed_out',
+      'message', 'Sign in first, then scan.');
+  end if;
+
+  if not is_active() then
+    return jsonb_build_object(
+      'ok', false, 'tone', 'danger', 'reason', 'inactive',
+      'message', 'This account is not active. Talk to the transport office.');
+  end if;
+
+  select vd.vehicle_id, v.label into van_id, van_label
+  from vehicle_devices vd
+  join vehicles v on v.id = vd.vehicle_id
+  where vd.board_code = btrim(code);
+
+  if van_id is null then
+    return jsonb_build_object(
+      'ok', false, 'tone', 'danger', 'reason', 'unknown_code',
+      'message', 'That code is not one of ours. Ask the driver to board you by name.');
+  end if;
+
+  select t.* into trip
+  from daily_trips t
+  where t.vehicle_id = van_id
+    and t.date = current_date
+    and t.status = 'active'
+  order by t.started_at desc nulls last
+  limit 1;
+
+  if trip.id is null then
+    return jsonb_build_object(
+      'ok', false, 'tone', 'warn', 'reason', 'no_active_trip',
+      'message', van_label || ' has not started its route yet. Scan as you get on.');
+  end if;
+
+  select sts.* into rider
+  from student_trip_status sts
+  where sts.trip_id = trip.id and sts.student_id = me;
+
+  if rider.id is null then
+    -- The wrong-van case, and the one worth answering properly. A child holding
+    -- the right app at the wrong door should be TOLD where to go, not handed an
+    -- error.
+    select rt.name as route_name, p.full_name as driver_name
+      into other
+    from student_trip_status sts
+    join daily_trips t       on t.id = sts.trip_id
+    join route_templates rt  on rt.id = t.route_id
+    left join profiles p     on p.id = t.driver_id
+    where sts.student_id = me
+      and t.date = current_date
+      and t.status in ('scheduled', 'active')
+    order by t.started_at nulls last
+    limit 1;
+
+    if other.route_name is not null then
+      return jsonb_build_object(
+        'ok', false, 'tone', 'danger', 'reason', 'wrong_van',
+        'message', 'This is ' || van_label || ', and you are not on it today. You ride '
+                   || other.route_name
+                   || coalesce(' with ' || other.driver_name, '')
+                   || '. Do not get on -- find your van or tell the driver.');
+    end if;
+
+    return jsonb_build_object(
+      'ok', false, 'tone', 'danger', 'reason', 'not_riding',
+      'message', 'You are not down to ride today. Talk to the driver before you get on.');
+  end if;
+
+  -- A second scan is the most likely mistap there is. It must not read as a
+  -- failure.
+  if rider.status in ('boarded', 'in_transit') then
+    return jsonb_build_object(
+      'ok', true, 'tone', 'warn', 'reason', 'already_aboard',
+      'message', 'You are already marked on board. Nothing more to do.');
+  end if;
+
+  -- Scanning must not silently contradict an absence the office is holding a
+  -- request for. That is the case C4 built "Boarding anyway" for, and it needs a
+  -- driver and a note.
+  if rider.status in ('absent', 'parent_pickup', 'no_show') then
+    return jsonb_build_object(
+      'ok', false, 'tone', 'danger', 'reason', 'marked_away',
+      'message', 'You are recorded as not travelling today, so scanning will not board you. '
+                 || 'Speak to the driver -- they can still take you.');
+  end if;
+
+  if rider.status <> 'scheduled' and rider.status <> 'waiting' then
+    return jsonb_build_object(
+      'ok', false, 'tone', 'warn', 'reason', 'not_boardable',
+      'message', 'Your ride is already recorded as '
+                 || replace(rider.status::text, '_', ' ') || '. See the driver.');
+  end if;
+
+  -- THE CHECK THAT MATTERS. Without it the printed card boards anyone, anywhere,
+  -- for the whole length of the run.
+  select tsp.* into prog
+  from trip_stop_progress tsp
+  where tsp.trip_id = trip.id and tsp.stop_id = rider.pickup_stop_id;
+
+  -- The origin is the one stop a driver never marks an arrival at: the van
+  -- starts there. For an afternoon run that is the school, where most of the
+  -- roster boards, so treating "no arrival recorded" as "not here yet" would
+  -- break every afternoon scan.
+  select rs.id into origin_stop
+  from route_stops rs
+  where rs.route_id = trip.route_id
+  order by rs.seq
+  limit 1;
+
+  if prog.departed_at is not null then
+    return jsonb_build_object(
+      'ok', false, 'tone', 'danger', 'reason', 'van_departed',
+      'message', 'The van has already left your stop. Do not get on -- tell the driver.');
+  end if;
+
+  if prog.arrived_at is null and rider.pickup_stop_id is distinct from origin_stop then
+    return jsonb_build_object(
+      'ok', false, 'tone', 'warn', 'reason', 'van_not_here',
+      'message', 'The van has not reached your stop yet. Scan the code as you get on.');
+  end if;
+
+  -- `updated_by` is the student, which is how notify_on_rider_status() knows to
+  -- say "scanned aboard" rather than claiming the driver confirmed it -- they
+  -- have not, yet. The departure confirmation is where that happens.
+  update student_trip_status
+  set status     = 'boarded',
+      board_time = now(),
+      updated_by = me,
+      updated_at = now()
+  where id = rider.id;
+
+  return jsonb_build_object(
+    'ok', true, 'tone', 'success', 'reason', 'boarded',
+    'vehicle', van_label,
+    'message', 'You are on board ' || van_label || '. Your family has been told.');
+end;
+$$;
+
+revoke execute on function board_by_vehicle_code(text) from public, anon;
+grant execute on function board_by_vehicle_code(text) to authenticated;
+
 
 -- ---------------------------------------------------------------------------
 -- C7 — "this student isn't on my list"

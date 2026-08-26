@@ -15,6 +15,91 @@ Newest first.
 
 ---
 
+## 26 August 2026
+
+### The scan direction inverted: students scan the van
+
+Until today `attendance_mode = 'scan'` meant the **driver** pointed a camera at a
+code on each student's phone. It now means the **student** points a camera at a
+printed card in the van. The operating requirement that forced it is simple:
+minimise what the driver touches. One driver action per child is faster than
+tapping a name, but it is still one decision per child.
+
+**The driver's job at a pickup stop is now three taps regardless of headcount** —
+Arrived, watch *"9 of 11 aboard"* settle, Departed.
+
+**What it costs, and why it is not a safety regression on its own.** A self-scan
+is not a driver observation, and §2.1 makes the driver the official record
+precisely because a child can scan from the pavement and then not get on. Three
+things narrow that:
+
+- The printed card names a **vehicle**, not a trip, a date or a student. On its
+  own it says nothing. Every decision is made server-side in
+  `board_by_vehicle_code()` against the trip that vehicle is running at that
+  second.
+- **It only works while the van is standing at that student's own stop** —
+  arrived, not yet departed. This is the check that matters. Without it the card
+  boards anyone, anywhere, for the whole length of the run, and a photograph of it
+  is an attendance machine. With it, a photograph is worthless at home, on another
+  day, or at somebody else's hub.
+- **The driver still confirms the departure.** `guard_stop_departure()` is
+  untouched and still refuses to leave a stop while a rostered student there has
+  no outcome. That confirmation is what ratifies the scans, which is what makes
+  this a faster route to the same record rather than a weaker record.
+
+The residual risk is a student scanning from within range and then not boarding.
+The departure confirmation catches it, because the driver is looking at a count
+rather than a list.
+
+**No RLS policy was loosened.** `students check in only` still caps a student at
+`waiting`, so a student calling PostgREST directly still cannot write `boarded`.
+`board_by_vehicle_code()` is `security definer` and is the only door.
+
+**The card is a credential, and deliberately not the GPS one.** `board_code` is a
+new column on `vehicle_devices`, beside `device_key` but separate from it:
+`ingest-location` accepts `device_key` **with no user JWT**, so printing that on a
+card inside the van would have handed every rider the ability to forge the van's
+position. `rotate_board_code()` reissues a card that has been photographed, admin
+only, and it is in Setup rather than requiring a database console at the moment
+somebody notices.
+
+**Elsewhere:**
+
+- Staff print the cards from **Setup → Fleet**, one van at a time, laid out
+  roughly as the card should end up on the door.
+- A student who scans the wrong van is told which one is theirs — *"This is Van 2,
+  and you are not on it today. You ride Route 1 with Sam."* That is the same
+  wrong-vehicle catch the old direction had, from the other end.
+- Scanning does **not** silently contradict an absence. A student the office has
+  down as absent is told to see the driver, because that path is C4's "Boarding
+  anyway" and it needs a driver and a note.
+- A second scan says *"You are already marked on board"* rather than reading as a
+  failure. It is the most likely mistap there is.
+- **Parents are told who actually confirmed it.** `notify_on_rider_status()` now
+  says *"Scanned aboard at 7:42 AM. The driver confirms the count before the van
+  leaves"* for a self-scan, instead of claiming the driver confirmed it at a
+  moment when nobody had looked up. Same reason the student's own screen now reads
+  "You scanned on" rather than "Recorded by your driver".
+- `BoardingScanner` had every piece of its copy hardcoded for the driver. It is
+  now direction-agnostic with the wording passed in — hardcoding it is how this
+  needed rewriting the first time.
+- `BoardingPass.tsx` is deleted. `boarding_code` and `identify_boarding_code()`
+  are what remain of the old direction and are now **unused by any screen**; left
+  in place because dropping a column mid-pilot buys nothing, and flagged in
+  FEATURES and the schema for deletion once self-scan has survived a term.
+
+Applied as `supabase/patches/2026-08-26-self-scan.sql` and folded into
+`schema.sql`. `supabase/patches/verify.sql` gained six checks, two of which read
+the function *bodies* rather than merely asserting they exist — a
+`board_by_vehicle_code()` missing its at-the-stop guard would pass an existence
+check and ship the entire risk of this feature by accident.
+
+**Not done here: C3, the offline queue**, which is still the one open item from
+the 10 August review. It matters more now than it did this morning — a scan that
+never lands is a child marked absent while sitting on the van — and it is next.
+
+---
+
 ## 13 August 2026
 
 ### A real map in the browser

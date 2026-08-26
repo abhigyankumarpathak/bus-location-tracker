@@ -41,7 +41,17 @@ with expected(kind, name, label) as (values
   ('column', 'organization.time_zone',      'TZ · the clock the vans run on (patch 4)'),
   ('func',   'local_ts',                    'TZ · planned times resolved locally (patch 4)'),
   ('body',   'transport_watchdog|local_ts', 'TZ · watchdog uses it (patch 4)'),
-  ('body',   'send_arrival_alerts|local_ts','TZ · arrival alerts use it (patch 4)')
+  ('body',   'send_arrival_alerts|local_ts','TZ · arrival alerts use it (patch 4)'),
+  -- Self-scan: students scan the van, not the other way round (patch 5).
+  ('column', 'vehicle_devices.board_code',  'SCAN · printed card secret'),
+  ('func',   'board_by_vehicle_code',       'SCAN · the student boards themselves'),
+  ('func',   'vehicle_board_codes',         'SCAN · what Setup prints'),
+  ('func',   'rotate_board_code',           'SCAN · reissue a leaked card'),
+  -- Existence is not enough here either. A scan that boarded a student
+  -- standing anywhere on the route would be the whole risk of this feature
+  -- shipped by accident, so check the stop guard is actually in the body.
+  ('body',   'board_by_vehicle_code|van_not_here', 'SCAN · van must be AT the stop'),
+  ('body',   'notify_on_rider_status|self_scanned','SCAN · parents told who confirmed it')
 )
 select
   case when found then '✅ OK  ' else '❌ MISSING' end as status,

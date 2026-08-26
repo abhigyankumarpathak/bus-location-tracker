@@ -4,17 +4,17 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Button, Card, theme } from './ui';
 
 /**
- * The driver's QR scanner, for attendance_mode = 'scan'.
+ * The QR scanner, for attendance_mode = 'scan'.
  *
- * The DRIVER scans the STUDENT — never the reverse. A code taped inside the van
- * that students scan themselves would be a self-reported boarding, and blueprint
- * §2.1 exists because a child can scan from the pavement and then miss the van.
- * Because the driver's phone does the scanning, the write is a driver write and
- * the safety model is untouched.
+ * As of 26 August 2026 this is the STUDENT's camera pointed at the printed card
+ * in the van, not the driver's pointed at a phone. The inversion is an operator
+ * requirement — minimise what the driver touches — and what it costs is written
+ * up on `board_by_vehicle_code()` in supabase/schema.sql. The component itself is
+ * direction-agnostic: it turns a QR payload into a verdict somebody can read.
  *
- * Stays open between scans. A driver boarding eleven children should not have to
- * reopen the camera eleven times, so this reports each result to the banner at
- * the bottom and keeps looking. `onClose` is the only way out.
+ * Every piece of copy is a prop, because "Scan students on" and "Scan the code in
+ * the van" are opposite instructions and hardcoding either was how this ended up
+ * needing rewriting the first time.
  */
 
 export interface ScanFeedback {
@@ -28,11 +28,25 @@ interface Props {
   /**
    * Called with the raw QR payload. Resolve it to feedback for the banner —
    * returning null means "not one of ours", and the scanner keeps looking
-   * without flashing anything at the driver.
+   * without flashing anything at the person holding it.
    */
   onScan(raw: string): Promise<ScanFeedback | null>;
-  /** e.g. "Oak Road — 6 to board". Shown at the top so the driver knows where they are. */
+  /** e.g. "Oak Road — 6 to board". Shown under the title. */
   subtitle?: string;
+  title?: string;
+  /** The line under the reticle: what to physically point the camera at. */
+  hint?: string;
+  /** The banner before anything has been scanned. */
+  idle?: string;
+  doneLabel?: string;
+  /** What to say when the camera is unavailable, including the way round it. */
+  deniedBody?: string;
+  /**
+   * Close once a scan succeeds. True for a student, who boards once and is done;
+   * false for a driver working through a queue of children, who should not have
+   * to reopen the camera for each one.
+   */
+  closeOnSuccess?: boolean;
 }
 
 /**
@@ -41,12 +55,24 @@ interface Props {
  */
 const REPEAT_LOCKOUT_MS = 3500;
 
-export function BoardingScanner({ visible, onClose, onScan, subtitle }: Props) {
+export function BoardingScanner({
+  visible,
+  onClose,
+  onScan,
+  subtitle,
+  title = 'Scan',
+  hint = 'Point the camera at the code.',
+  idle = 'Ready.',
+  doneLabel = 'Done scanning',
+  deniedBody,
+  closeOnSuccess = false,
+}: Props) {
   const [permission, requestPermission] = useCameraPermissions();
   const [feedback, setFeedback] = useState<ScanFeedback | null>(null);
 
   const busy = useRef(false);
   const seen = useRef<Map<string, number>>(new Map());
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // A fresh session each time it opens: yesterday's lockouts and last scan's
   // banner are both noise on the next stop.
@@ -55,6 +81,10 @@ export function BoardingScanner({ visible, onClose, onScan, subtitle }: Props) {
       seen.current.clear();
       setFeedback(null);
     }
+    return () => {
+      if (closeTimer.current) clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    };
   }, [visible]);
 
   const handle = useCallback(
@@ -70,7 +100,15 @@ export function BoardingScanner({ visible, onClose, onScan, subtitle }: Props) {
 
       try {
         const result = await onScan(data);
-        if (result) setFeedback(result);
+        if (result) {
+          setFeedback(result);
+          // Leave the verdict on screen long enough to actually read before the
+          // camera disappears — this is the only place a student is told they
+          // are aboard.
+          if (closeOnSuccess && result.tone === 'success') {
+            closeTimer.current = setTimeout(onClose, 2200);
+          }
+        }
         // A payload that is not ours gets no banner and no lockout — a random
         // QR code in the background should not block a real one behind it.
         else seen.current.delete(data);
@@ -83,7 +121,7 @@ export function BoardingScanner({ visible, onClose, onScan, subtitle }: Props) {
         busy.current = false;
       }
     },
-    [onScan],
+    [onScan, closeOnSuccess, onClose],
   );
 
   if (!visible) return null;
@@ -97,13 +135,15 @@ export function BoardingScanner({ visible, onClose, onScan, subtitle }: Props) {
               <Text style={styles.permTitle}>The camera is not available yet</Text>
               <Text style={styles.permBody}>
                 {permission?.canAskAgain === false
-                  ? 'Camera access is turned off for this app. Turn it on in your phone settings, or board students by name instead — the buttons on each student still work.'
-                  : 'Scanning students on needs the camera. You can also board them by name instead.'}
+                  ? `Camera access is turned off for this app. Turn it on in your phone settings. ${
+                      deniedBody ?? ''
+                    }`.trim()
+                  : deniedBody ?? 'Scanning needs the camera.'}
               </Text>
               {permission?.canAskAgain !== false ? (
                 <Button label="Allow camera" onPress={requestPermission} />
               ) : null}
-              <Button label="Back to the roster" variant="secondary" onPress={onClose} />
+              <Button label="Go back" variant="secondary" onPress={onClose} />
             </Card>
           </View>
         ) : (
@@ -117,13 +157,13 @@ export function BoardingScanner({ visible, onClose, onScan, subtitle }: Props) {
 
             {/* Everything below floats over the camera. */}
             <View style={styles.header} pointerEvents="box-none">
-              <Text style={styles.title}>Scan students on</Text>
+              <Text style={styles.title}>{title}</Text>
               {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
             </View>
 
             <View style={styles.reticle} pointerEvents="none">
               <View style={styles.frame} />
-              <Text style={styles.hint}>Point at the code on the student's phone.</Text>
+              <Text style={styles.hint}>{hint}</Text>
             </View>
 
             <View style={styles.footer}>
@@ -133,12 +173,12 @@ export function BoardingScanner({ visible, onClose, onScan, subtitle }: Props) {
                 </View>
               ) : (
                 <View style={[styles.banner, styles.bannerIdle]}>
-                  <Text style={styles.bannerIdleText}>Ready — the camera stays on between students.</Text>
+                  <Text style={styles.bannerIdleText}>{idle}</Text>
                 </View>
               )}
 
               <Pressable onPress={onClose} style={styles.done}>
-                <Text style={styles.doneText}>Done scanning</Text>
+                <Text style={styles.doneText}>{doneLabel}</Text>
               </Pressable>
             </View>
           </>
