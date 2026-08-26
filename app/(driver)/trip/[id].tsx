@@ -5,6 +5,13 @@ import { useAuth } from '../../../src/lib/auth';
 import { useFeatures } from '../../../src/lib/org';
 import { supabase } from '../../../src/lib/supabase';
 import { useReference, useTripStatuses } from '../../../src/lib/hooks';
+import {
+  enqueue,
+  newId,
+  startOutboxSync,
+  stopOutboxSync,
+  useOutbox,
+} from '../../../src/lib/outbox';
 import { isTracking, reportOnce, startTracking, stopTracking } from '../../../src/lib/tracking';
 import {
   RIDER_STATUS_LABEL,
@@ -22,6 +29,7 @@ import type {
   StudentTripStatus,
 } from '../../../src/lib/types';
 import { GpsDisabled } from '../../../src/components/Disabled';
+import { OutboxBanner } from '../../../src/components/OutboxBanner';
 import {
   Badge,
   Button,
@@ -67,6 +75,23 @@ export default function DriverTrip() {
 
   const ref = useReference();
   const { rows, trips, progress, loading, reload } = useTripStatuses();
+
+  /**
+   * C3. `connection` is the last thing the outbox learned about the network, and
+   * it gates the handful of actions that genuinely cannot be queued — see the
+   * note on each one. Everything else on this screen is written to the local log
+   * first and is unaffected by signal.
+   */
+  const { connection } = useOutbox();
+  const offline = connection === 'offline';
+
+  // Keep the queue draining for as long as a driver is on a trip screen. Started
+  // here rather than at import so a parent's phone never runs a retry loop for a
+  // queue it can never have.
+  useEffect(() => {
+    startOutboxSync();
+    return () => stopOutboxSync();
+  }, []);
 
   const [students, setStudents] = useState<Profile[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -241,14 +266,15 @@ export default function DriverTrip() {
   async function markArrived(stopId: string) {
     setBusyStop(stopId);
     setError('');
-    const { error: e } = await supabase
-      .from('trip_stop_progress')
-      .upsert(
-        { trip_id: id, stop_id: stopId, arrived_at: new Date().toISOString() },
-        { onConflict: 'trip_id,stop_id' },
-      );
+    const r = await enqueue({
+      table: 'trip_stop_progress',
+      op: 'upsert',
+      onConflict: 'trip_id,stop_id',
+      values: { trip_id: id, stop_id: stopId, arrived_at: new Date().toISOString() },
+      label: `${ref.stopName(stopId) ?? 'Stop'} — arrived`,
+    });
     setBusyStop(null);
-    if (e) return setError(e.message);
+    if (!r.ok) return setError(r.error ?? 'That did not save.');
     await reload();
   }
 
@@ -289,29 +315,39 @@ export default function DriverTrip() {
     const boardedHere = riders.filter(
       (r) => r.pickup_stop_id === stopId && r.status === 'boarded',
     );
-    const { error: e } = await supabase
-      .from('trip_stop_progress')
-      .upsert(
-        {
-          trip_id: id,
-          stop_id: stopId,
-          departed_at: new Date().toISOString(),
-          // Never inferred from a null arrival: "deliberately skipped" and "the
-          // arrival was never recorded" are different facts about a child.
-          skipped: Boolean(opts.skipped),
-          departed_with_unresolved: unresolved.length > 0,
-        },
-        { onConflict: 'trip_id,stop_id' },
-      );
-    if (e) {
+    const where = ref.stopName(stopId) ?? 'Stop';
+
+    // Two writes, and the ORDER between them is load-bearing on replay: the
+    // departure has to reach the server before the promotion, exactly as it does
+    // online. The outbox drains in insertion order and stops at the first
+    // failure, so enqueuing them here in this order is the whole guarantee.
+    const r = await enqueue({
+      table: 'trip_stop_progress',
+      op: 'upsert',
+      onConflict: 'trip_id,stop_id',
+      values: {
+        trip_id: id,
+        stop_id: stopId,
+        departed_at: new Date().toISOString(),
+        // Never inferred from a null arrival: "deliberately skipped" and "the
+        // arrival was never recorded" are different facts about a child.
+        skipped: Boolean(opts.skipped),
+        departed_with_unresolved: unresolved.length > 0,
+      },
+      label: `${where} — departed`,
+    });
+    if (!r.ok) {
       setBusyStop(null);
-      return setError(e.message);
+      return setError(r.error ?? 'That did not save.');
     }
     if (boardedHere.length) {
-      await supabase
-        .from('student_trip_status')
-        .update({ status: 'in_transit', updated_by: me })
-        .in('id', boardedHere.map((r) => r.id));
+      await enqueue({
+        table: 'student_trip_status',
+        op: 'update',
+        ids: boardedHere.map((x) => x.id),
+        values: { status: 'in_transit', updated_by: me, updated_at: new Date().toISOString() },
+        label: `${boardedHere.length} rider${boardedHere.length === 1 ? '' : 's'} in transit from ${where}`,
+      });
     }
     setBusyStop(null);
     setBlockedStop(null);
@@ -344,11 +380,17 @@ export default function DriverTrip() {
     if (status === 'dropped_off') patch.dropoff_time = new Date().toISOString();
     if (note) patch.note = note;
 
-    const { error: e } = await supabase.from('student_trip_status').update(patch).eq('id', row.id);
+    const r = await enqueue({
+      table: 'student_trip_status',
+      op: 'update',
+      ids: [row.id],
+      values: patch,
+      label: `${nameOf(row.student_id)} — ${RIDER_STATUS_LABEL[status].toLowerCase()}`,
+    });
     setBusyId(null);
 
-    if (e) {
-      setError(e.message);
+    if (!r.ok) {
+      setError(r.error ?? 'That did not save.');
       return false;
     }
     await reload();
@@ -368,6 +410,15 @@ export default function DriverTrip() {
    * back" rather than quietly ceasing to mention it.
    */
   async function undoRider(row: StudentTripStatus) {
+    // NOT queueable, and this is not a limitation to route around. The server
+    // measures the undo window against its own clock, so an undo written to the
+    // log now and flushed in ten minutes is refused by definition. Queueing it
+    // would mean showing a driver an undo that silently evaporates.
+    if (offline) {
+      return setError(
+        'Undo needs signal — the time limit on it is measured by the server. Mark the correct outcome instead; the office can fix the record.',
+      );
+    }
     setError('');
     setBusyId(row.id);
     const { error: e } = await supabase.rpc('undo_rider_status', { row_id: row.id });
@@ -378,6 +429,11 @@ export default function DriverTrip() {
 
   /** Same, for the last arrive/depart tap on a stop. */
   async function undoStop(stopId: string) {
+    if (offline) {
+      return setError(
+        'Undo needs signal — the time limit on it is measured by the server. Keep driving; the office can fix a mistapped stop.',
+      );
+    }
     setError('');
     setBusyStop(stopId);
     const { error: e } = await supabase.rpc('undo_stop_progress', {
@@ -446,13 +502,16 @@ export default function DriverTrip() {
     setError('');
 
     const now = new Date().toISOString();
-    const { error: e } = await supabase
-      .from('student_trip_status')
-      .update({ status: 'dropped_off', dropoff_time: now, updated_by: me, updated_at: now })
-      .in('id', ids);
+    const r = await enqueue({
+      table: 'student_trip_status',
+      op: 'update',
+      ids,
+      values: { status: 'dropped_off', dropoff_time: now, updated_by: me, updated_at: now },
+      label: `${ids.length} dropped off at ${ref.stopName(stopId) ?? 'this stop'}`,
+    });
 
     setBusyStop(null);
-    if (e) return setError(e.message);
+    if (!r.ok) return setError(r.error ?? 'That did not save.');
     await reload();
   }
 
@@ -487,12 +546,15 @@ export default function DriverTrip() {
 
   async function startTrip() {
     if (!trip) return;
-    const { error: e } = await supabase
-      .from('daily_trips')
-      .update({ status: 'active', started_at: new Date().toISOString() })
-      .eq('id', trip.id);
-    if (e) {
-      setError(e.message);
+    const r = await enqueue({
+      table: 'daily_trips',
+      op: 'update',
+      ids: [trip.id],
+      values: { status: 'active', started_at: new Date().toISOString() },
+      label: `${route?.name ?? 'Route'} — trip started`,
+    });
+    if (!r.ok) {
+      setError(r.error ?? 'That did not save.');
       return;
     }
     await reload();
@@ -515,13 +577,16 @@ export default function DriverTrip() {
       return;
     }
 
-    const { error: e } = await supabase
-      .from('daily_trips')
-      .update({ status: 'completed', ended_at: new Date().toISOString() })
-      .eq('id', trip.id);
+    const r = await enqueue({
+      table: 'daily_trips',
+      op: 'update',
+      ids: [trip.id],
+      values: { status: 'completed', ended_at: new Date().toISOString() },
+      label: `${route?.name ?? 'Route'} — trip ended`,
+    });
 
-    if (e) {
-      setError(e.message);
+    if (!r.ok) {
+      setError(r.error ?? 'That did not save.');
       return;
     }
 
@@ -532,7 +597,12 @@ export default function DriverTrip() {
     setTrackingNote('');
 
     await reload();
-    Alert.alert('Trip completed', 'Every student has a final status.');
+    Alert.alert(
+      'Trip completed',
+      r.queued
+        ? 'Every student has a final status. This phone has no signal, so the office will see it as soon as you do — nothing is lost in the meantime.'
+        : 'Every student has a final status.',
+    );
     router.back();
   }
 
@@ -545,6 +615,13 @@ export default function DriverTrip() {
    */
   async function reportDelay(minutes: number) {
     if (!trip) return;
+    // NOT queueable: report_delay() is cumulative on the server, so a replayed
+    // one adds the minutes twice and every family gets a second wrong time.
+    if (offline) {
+      return setError(
+        'Reporting a delay needs signal — it recalculates every family’s expected time, so it cannot be saved for later. Try again when you have a bar.',
+      );
+    }
     setError('');
     setDelaying(true);
     const { error: e } = await supabase.rpc('report_delay', {
@@ -569,6 +646,13 @@ export default function DriverTrip() {
    * else.
    */
   async function lookupRider() {
+    // A question, not a record. There is nothing to queue — the answer lives on
+    // the server and is worthless ten minutes late.
+    if (offline) {
+      return setError(
+        'Looking a student up needs signal. Do not carry a child who is not on your list without checking — call the office.',
+      );
+    }
     setError('');
     setLookupBusy(true);
     const { data, error: e } = await supabase.rpc('find_rider_today', { search: lookupName });
@@ -589,6 +673,15 @@ export default function DriverTrip() {
       Alert.alert('Say what happened', 'Boarding a student at a stop that is not theirs needs a note.');
       return;
     }
+    // NOT queueable: the server validates which stop this rider may be moved to
+    // and rewrites their assignment, so it cannot be replayed blind. The plain
+    // Boarded button on their own card still works offline and records the
+    // boarding — losing the stop detail beats losing the boarding.
+    if (offline) {
+      return setError(
+        'Recording a different stop needs signal. Board them with the normal Boarded button for now and tell the office which hub it was.',
+      );
+    }
     setError('');
     setBusyId(wrongStopFor.rowId);
     const { error: e } = await supabase.rpc('board_at_other_stop', {
@@ -605,19 +698,33 @@ export default function DriverTrip() {
 
   async function reportIncident(kind: IncidentKind) {
     if (!trip || !me) return;
-    const { error: e } = await supabase.from('incidents').insert({
-      trip_id: trip.id,
-      driver_id: me,
-      kind,
-      severity: kind === 'accident' ? 'high' : kind === 'breakdown' ? 'medium' : 'low',
-      description: incidentNote.trim() || null,
+    // The id is generated HERE, not by the server. A retry after a half-finished
+    // flush then collides on the primary key and is ignored, instead of filing
+    // the same breakdown four times.
+    const r = await enqueue({
+      table: 'incidents',
+      op: 'insert',
+      values: {
+        id: newId(),
+        trip_id: trip.id,
+        driver_id: me,
+        kind,
+        severity: kind === 'accident' ? 'high' : kind === 'breakdown' ? 'medium' : 'low',
+        description: incidentNote.trim() || null,
+      },
+      label: `Incident reported — ${kind}`,
     });
-    if (e) {
-      setError(e.message);
+    if (!r.ok) {
+      setError(r.error ?? 'That did not save.');
       return;
     }
     setIncidentNote('');
-    Alert.alert('Reported', 'The transport office and affected parents have been notified.');
+    Alert.alert(
+      'Reported',
+      r.queued
+        ? 'Saved on this phone. It sends the moment you have signal — but if this is urgent, radio or call it in as well rather than waiting.'
+        : 'The transport office and affected parents have been notified.',
+    );
   }
 
   if (loading || ref.loading) return <Loading />;
@@ -668,6 +775,10 @@ export default function DriverTrip() {
           </Text>
         </Card>
       ) : null}
+
+      {/* C3: what has not reached the server yet. Sits above the roster because
+          a driver needs to know the record is behind BEFORE they act on it. */}
+      <OutboxBanner />
 
       <ErrorText>{error}</ErrorText>
 

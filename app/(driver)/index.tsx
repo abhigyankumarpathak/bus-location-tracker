@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { useAuth } from '../../src/lib/auth';
 import { ensureTodaysTrips, useReference, useTripStatuses } from '../../src/lib/hooks';
+import { startOutboxSync, stopOutboxSync } from '../../src/lib/outbox';
 import { enforceTrackingScope } from '../../src/lib/tracking';
 import { ROUTE_TYPE_LABEL, isFinal } from '../../src/lib/types';
 import {
@@ -17,6 +18,7 @@ import {
   Title,
   theme,
 } from '../../src/components/ui';
+import { OutboxBanner } from '../../src/components/OutboxBanner';
 import { PushStatus } from '../../src/components/PushStatus';
 
 /**
@@ -34,6 +36,15 @@ export default function DriverToday() {
   useEffect(() => {
     ensureTodaysTrips().then(reload);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // C3: keep the queue draining while a driver has the app open. This screen is
+  // the one a driver reliably opens, and it is also where they would land after
+  // a route finished in a dead spot — so anything still unsent gets another go
+  // here rather than waiting for them to reopen a trip.
+  useEffect(() => {
+    startOutboxSync();
+    return () => stopOutboxSync();
   }, []);
 
   /**
@@ -60,6 +71,7 @@ export default function DriverToday() {
       <Title sub={profile?.full_name || undefined}>Today's trips</Title>
 
       <PushStatus compact />
+      <OutboxBanner />
 
       {trips.length === 0 ? (
         <>

@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bus Tracker — What the app does</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 16mm; }
+
+  :root {
+    --ink: #14181f;
+    --body: #2c333d;
+    --soft: #5b6675;
+    --line: #d8dee6;
+    --wash: #f4f6f9;
+    --parent: #1f6f8b;
+    --student: #2f7d4f;
+    --driver: #a3541b;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: "Charter", "Georgia", "Times New Roman", serif;
+    font-size: 10.4pt;
+    line-height: 1.5;
+    color: var(--body);
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  h1, h2, h3, h4, .kicker, .badge, .tag, th, .step-n, .cover-meta {
+    font-family: "Helvetica Neue", "Inter", Arial, sans-serif;
+  }
+
+  /* ---------------------------------------------------------------- cover */
+  .cover {
+    height: 245mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    page-break-after: always;
+  }
+  .cover h1 {
+    font-size: 34pt;
+    line-height: 1.08;
+    margin: 0 0 6mm;
+    color: var(--ink);
+    letter-spacing: -0.02em;
+  }
+  .cover .lede {
+    font-size: 13pt;
+    line-height: 1.55;
+    color: var(--soft);
+    max-width: 128mm;
+    margin: 0 0 14mm;
+  }
+  .cover-meta {
+    font-size: 9pt;
+    color: var(--soft);
+    border-top: 2px solid var(--ink);
+    padding-top: 4mm;
+    display: flex;
+    justify-content: space-between;
+  }
+  .toc { margin: 0 0 14mm; padding: 0; list-style: none; }
+  .toc li {
+    padding: 3.5mm 0;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: baseline;
+    gap: 5mm;
+    font-size: 11pt;
+  }
+  .toc .who { font-weight: 700; color: var(--ink); min-width: 34mm; }
+  .toc .what { color: var(--soft); font-size: 10pt; }
+
+  /* -------------------------------------------------------------- section */
+  .section { page-break-before: always; }
+  .section-head { border-top: 3px solid currentColor; padding-top: 4mm; margin-bottom: 8mm; }
+  .section-head .kicker {
+    font-size: 8.5pt;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    font-weight: 700;
+    margin: 0 0 2mm;
+  }
+  .section-head h2 {
+    font-size: 22pt;
+    margin: 0 0 3mm;
+    color: var(--ink);
+    letter-spacing: -0.015em;
+  }
+  .section-head p { margin: 0; color: var(--soft); font-size: 10.5pt; max-width: 140mm; }
+
+  #parents  { color: var(--parent); }
+  #students { color: var(--student); }
+  #drivers  { color: var(--driver); }
+
+  h3 {
+    font-size: 12.5pt;
+    color: var(--ink);
+    margin: 7mm 0 2.5mm;
+    page-break-after: avoid;
+  }
+  h4 {
+    font-size: 10pt;
+    color: var(--ink);
+    margin: 5mm 0 1.5mm;
+    page-break-after: avoid;
+  }
+  p { margin: 0 0 3mm; }
+  .section p, .section li, .section td { color: var(--body); }
+
+  ul { margin: 0 0 3mm; padding-left: 5mm; }
+  li { margin-bottom: 1.6mm; }
+
+  /* ---------------------------------------------------------------- parts */
+  .note {
+    background: var(--wash);
+    border-left: 3px solid currentColor;
+    padding: 3.5mm 4.5mm;
+    margin: 4mm 0;
+    page-break-inside: avoid;
+  }
+  .note strong { color: var(--ink); }
+  .note p:last-child { margin-bottom: 0; }
+
+  .steps { counter-reset: s; margin: 3mm 0 4mm; padding: 0; list-style: none; }
+  .steps li {
+    counter-increment: s;
+    display: flex;
+    gap: 4mm;
+    padding: 2.5mm 0;
+    border-bottom: 1px solid var(--line);
+    page-break-inside: avoid;
+  }
+  .steps li::before {
+    content: counter(s);
+    font-family: "Helvetica Neue", Arial, sans-serif;
+    font-weight: 700;
+    font-size: 9pt;
+    color: #fff;
+    background: currentColor;
+    min-width: 6mm;
+    height: 6mm;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    margin-top: 0.6mm;
+  }
+  .steps li > div { flex: 1; }
+  .steps b { color: var(--ink); }
+
+  table { width: 100%; border-collapse: collapse; margin: 3mm 0 4mm; page-break-inside: avoid; }
+  th {
+    text-align: left;
+    font-size: 8.5pt;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--soft);
+    border-bottom: 1.5px solid var(--ink);
+    padding: 0 3mm 1.5mm 0;
+  }
+  td { padding: 2.2mm 3mm 2.2mm 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td:first-child { font-weight: 600; color: var(--ink); width: 42mm; }
+
+  .tag {
+    display: inline-block;
+    font-size: 7.5pt;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 0.8mm 2mm;
+    border-radius: 2px;
+    background: var(--wash);
+    border: 1px solid var(--line);
+    color: var(--soft);
+    vertical-align: 1.2mm;
+    margin-left: 2mm;
+  }
+
+  .callout {
+    border: 1.5px solid var(--ink);
+    padding: 4mm 5mm;
+    margin: 5mm 0;
+    page-break-inside: avoid;
+  }
+  .callout h4 { margin-top: 0; }
+  .callout p:last-child { margin-bottom: 0; }
+
+  .fine { font-size: 9pt; color: var(--soft); }
+  .avoid { page-break-inside: avoid; }
+</style>
+</head>
+<body>
+
+<!-- ===================================================== COVER -->
+<div class="cover">
+  <h1>Bus&nbsp;Tracker</h1>
+  <p class="lede">
+    What the app does, written separately for the three people who use it on a
+    school run — the parent at home, the student at the hub, and the driver at
+    the wheel.
+  </p>
+
+  <ul class="toc">
+    <li><span class="who">Parents</span><span class="what">Where your child is, and telling us when they are not travelling</span></li>
+    <li><span class="who">Students</span><span class="what">Getting on the right van and letting people know you are there</span></li>
+    <li><span class="who">Drivers</span><span class="what">Running a route, and what the app will not let you skip</span></li>
+  </ul>
+
+  <div class="cover-meta">
+    <span>Student Transportation Platform</span>
+    <span>26 August 2026</span>
+  </div>
+</div>
+
+<!-- ===================================================== PARENTS -->
+<div class="section" id="parents">
+  <div class="section-head">
+    <p class="kicker">For families</p>
+    <h2>Parents &amp; guardians</h2>
+    <p>You see where your child's van is, you are told when they get on and off, and you tell the school when they are not travelling — without phoning anybody.</p>
+  </div>
+
+  <h3>Getting set up</h3>
+  <p>The transport office issues you an invite code. That code is what gives your account its role, so you cannot sign yourself up as a parent without one.</p>
+  <p>Once you are in, you link to your child. The link needs their side to accept it, or the office to approve it — which is what stops anyone adding themselves to a child they are not responsible for. Until a link is accepted, you will see an empty <strong>My children</strong> screen rather than somebody else's data.</p>
+
+  <h3>What you see each day</h3>
+  <table>
+    <tr><th>Screen</th><th>What it tells you</th></tr>
+    <tr><td>My children</td><td>Each child's trips for today — their hub, the time the van is due, the vehicle, the driver's first name, and where the ride has got to.</td></tr>
+    <tr><td>Map</td><td>The van's live position and an estimated arrival at your child's hub. <span class="tag">If enabled</span></td></tr>
+    <tr><td>Alerts</td><td>Everything the school has sent you, newest first, kept in the app whether or not you saw the notification.</td></tr>
+    <tr><td>Report a change</td><td>Absences, parent pickups, and requests to change your child's hub or school.</td></tr>
+  </table>
+
+  <h3>What you get told, and when</h3>
+  <ul>
+    <li><strong>15 and 5 minutes before the van is due</strong> at your child's hub, so there is time to walk down.</li>
+    <li><strong>When your child boards</strong>, with the time.</li>
+    <li><strong>When the van leaves their hub</strong> — the answer to "has it been past yet?"</li>
+    <li><strong>When they are dropped off safely.</strong></li>
+    <li><strong>If the van is running late</strong>, with the new expected time for <em>your</em> stop, not a generic apology.</li>
+    <li><strong>If something goes wrong</strong> — your child did not appear at the hub, or could not be dropped off. These are urgent and ask you to confirm you have seen them.</li>
+  </ul>
+
+  <div class="note">
+    <p><strong>If you have two children on the same van</strong>, you get one message naming both, not two a second apart. That is deliberate: near-identical alerts are how people learn to swipe them away unread.</p>
+  </div>
+
+  <div class="callout">
+    <h4>Why an urgent alert asks you to tap "I have seen this"</h4>
+    <p>Nobody sits watching a screen during a run. For the two messages that really matter — a child who checked in but was not picked up, and a child who could not be dropped off — the system needs to know a human actually received it. If nobody acknowledges within a few minutes, it escalates back to the transport office rather than assuming the message landed.</p>
+  </div>
+
+  <h3>Telling the school your child is not travelling</h3>
+  <ul>
+    <li><strong>An absence covers a date range.</strong> A fortnight's holiday is one request, not fourteen.</li>
+    <li><strong>Approval is automatic right up until the van actually starts that route.</strong> Not a fixed clock time — if you report at 06:55 and the van leaves at 07:10, it goes through and the driver's roster updates before they set off.</li>
+    <li><strong>Once the van has started, it freezes.</strong> After that the request goes to the office to handle by hand, because the driver is already looking at a list.</li>
+    <li><strong>"Parent pickup"</strong> tells the driver not to expect them, and is recorded separately from an illness.</li>
+  </ul>
+
+  <h3>Changing a hub or a school</h3>
+  <p>You can request it; you cannot set it. It goes to the transport office as a request, because which van carries which child is a routing decision with a seat count behind it. You will be told when it is approved or declined, with the reason.</p>
+
+  <div class="note">
+    <p><strong>One thing you cannot do, on purpose.</strong> You cannot mark your own child as boarded or dropped off. Only the driver's confirmation — or, where the school runs scanning, a scan made physically at the van — creates that record. A parent-reported boarding could be wrong, and the school would then believe a missing child was safely aboard.</p>
+  </div>
+
+  <h3>Your child's record</h3>
+  <p>Every Sunday, each child's week is rolled into a single report and sent to you. Routine ride detail older than the retention period is then removed, so the record stays a summary rather than growing forever. <strong>Anything that went wrong is kept in full and never purged</strong> — incidents, no-shows, and any time a coordinator overrode something.</p>
+</div>
+
+<!-- ===================================================== STUDENTS -->
+<div class="section" id="students">
+  <div class="section-head">
+    <p class="kicker">For riders</p>
+    <h2>Students</h2>
+    <p>Your van, your stop, and the two taps that keep everyone from wondering where you are.</p>
+  </div>
+
+  <h3>Your Today screen</h3>
+  <p>Everything for the day is on one screen: which hub you use, what time the van is due, which vehicle it is, and your driver's first name. If you ride both ways, both legs are there.</p>
+
+  <h3>The two things you do</h3>
+
+  <h4>1. Check in — "I'm at the hub"</h4>
+  <p>Tap this when you are actually standing at your stop. It tells your driver and the office that you are waiting.</p>
+
+  <div class="note">
+    <p><strong>Checking in does not mean you are on the bus.</strong> It means "I am here". It is the single most important distinction in the app — if you check in and then wander off, the app knows the van is looking for someone who said they were there, and it will raise that as urgent rather than quietly writing you off.</p>
+  </div>
+
+  <h4>2. Scan to board <span class="tag">If enabled</span></h4>
+  <p>There is a printed code on a card by the van door. Open the app, tap <strong>Scan to board</strong>, point your phone at it. That is what marks you on board, and your family is told.</p>
+  <ul>
+    <li><strong>It only works while the van is actually at your stop.</strong> Photographing the card gets you nothing at home, on another day, or at somebody else's hub.</li>
+    <li><strong>Scan the wrong van and it tells you so</strong> — and which one is yours. Do not get on.</li>
+    <li><strong>Scanning twice is fine.</strong> It says you are already on board.</li>
+    <li><strong>Phone flat? Nothing breaks.</strong> The driver can mark you on by name.</li>
+  </ul>
+  <p class="fine">Where the school does not run scanning, the driver marks you on instead and you do nothing beyond checking in.</p>
+
+  <h3>After-school club</h3>
+  <p>If you are on a club route, tell the office whether you are riding that day. Cancelling means the van is not held for you; saying you are attending puts you on the roster.</p>
+
+  <h3>History</h3>
+  <p>Every past trip and how it ended — checked in, boarded, dropped off, and the times. This is your own record; you can read it, and nobody can quietly change it.</p>
+
+  <h3>Your profile</h3>
+  <p>Read-only. Your hubs and school are set by the transport office, not chosen in the app. If something is wrong, ask them — or get a parent to file a change request.</p>
+
+  <div class="callout">
+    <h4>What you can and cannot record about yourself</h4>
+    <p>You can say <strong>"I am waiting at the hub"</strong>, and where scanning is on you can scan yourself aboard at the van. You cannot mark yourself dropped off, and you cannot mark yourself absent from the driver's roster — that goes through a parent or the office. The limits are enforced by the database, not just hidden in the app.</p>
+  </div>
+</div>
+
+<!-- ===================================================== DRIVERS -->
+<div class="section" id="drivers">
+  <div class="section-head">
+    <p class="kicker">For the wheel</p>
+    <h2>Drivers</h2>
+    <p>Work down the stops in order. The app is built for one hand in a moving vehicle, and it is deliberately hard to leave a child behind quietly.</p>
+  </div>
+
+  <h3>A run, start to finish</h3>
+  <ol class="steps">
+    <li><div><b>Start trip.</b> Today's route is already on your screen. This is also when the van starts sharing its position with the families on board.</div></li>
+    <li><div><b>Arrived at this stop.</b> Tap it as you pull in.</div></li>
+    <li><div><b>Students get on.</b> Where scanning is on, they scan the card by the door and you watch the count — <em>"9 of 11 aboard"</em>. Otherwise you tap each one: Boarded, No-Show, Absent, or Parent pickup.</div></li>
+    <li><div><b>Departed this stop.</b> The next stop unlocks when you leave this one.</div></li>
+    <li><div><b>At the school</b>, tap Arrived, then <b>"All N dropped off safely"</b> — one tap for the whole van. On the afternoon run, drop-offs happen at each hub instead.</div></li>
+    <li><div><b>End trip.</b> Only once every student has an outcome.</div></li>
+  </ol>
+
+  <div class="note">
+    <p><strong>The afternoon run is the same steps in reverse.</strong> The school is where you start, so there is no "Arrived" there — you board everyone and tap Departed.</p>
+  </div>
+
+  <h3>The one thing the app will not let you skip</h3>
+  <p>You cannot leave a stop while a student on the list for it has no outcome recorded. If you try, the app holds the departure and lists exactly who — with their buttons right there, so you are not hunting back up the screen.</p>
+  <p><strong>You can always leave anyway.</strong> A van that cannot move is its own safety problem. It just stops being silent: it records what happened for each child and tells their parents and the office immediately, instead of nobody finding out until the end of the route.</p>
+
+  <h3>When something is not routine</h3>
+  <table>
+    <tr><th>Situation</th><th>What to do</th></tr>
+    <tr><td>Marked absent, but they turn up</td><td><strong>"Boarding anyway — turned up"</strong>. It needs a note, because someone is expecting this child not to be on the van.</td></tr>
+    <tr><td>You tapped the wrong thing</td><td><strong>Undo</strong> appears for about 90 seconds and then disappears on its own.</td></tr>
+    <tr><td>Someone at the wrong hub</td><td><strong>"Boarding here instead"</strong> records the stop they actually got on at.</td></tr>
+    <tr><td>Someone not on your list</td><td><strong>Look up a student</strong> — it tells you whose van they belong on. Do not carry them until you know.</td></tr>
+    <tr><td>Running late</td><td><strong>+10 / +15 / +30</strong>. This shifts every remaining time and tells each family the new time for their own stop.</td></tr>
+    <tr><td>Breakdown, accident, incident</td><td><strong>Report an incident</strong> with a note. The office and affected parents are told.</td></tr>
+    <tr><td>Cannot drop a child off</td><td><strong>"Unable to drop off"</strong>. They stay on the van, the office is alerted urgently, and the trip cannot close until a coordinator resolves it.</td></tr>
+  </table>
+
+  <h3>No signal</h3>
+  <div class="callout">
+    <h4>Keep driving. Nothing is lost.</h4>
+    <p>Everything you record is saved on the phone first and sent when signal returns. You will see <strong>"3 actions not yet saved"</strong> in amber — that is information, not an error. <strong>Do not tap anything twice.</strong> It is already recorded, and it will still be recorded if the app closes or the phone restarts.</p>
+    <p>When it does send, the times are the times you tapped, not the time the signal came back. Parents are told when it actually happened, and told that the van had no signal — so nobody thinks you recorded it late.</p>
+    <p>A few things genuinely need signal and will say so: undo, looking up a student, reporting a delay, and recording a different stop. If a message ever turns <strong>red</strong>, the server refused something and nobody else knows about it — call the office before you finish the route.</p>
+  </div>
+
+  <h3>Your position</h3>
+  <p>The van shares its location <strong>only while a route is running</strong>. It stops the moment you end the trip, and it stops itself if you forget. A parked van reports about once a minute rather than continuously, to spare the battery.</p>
+  <p>If you only granted "While Using the App", the screen tells you plainly that position is shared only while you are looking at it. A refused permission does not stop the route — it just means the map is empty for the families.</p>
+
+  <div class="note">
+    <p><strong>You are the official record.</strong> What a student or parent says is a claim; what you confirm is what happened. Where scanning is on, the students' scans are provisional until you confirm the departure — that confirmation is what turns a count into a record.</p>
+  </div>
+</div>
+
+</body>
+</html>

@@ -7,7 +7,7 @@
 --   createdb bustest && psql bustest -f supabase/schema.sql
 --   psql bustest -f supabase/patches/flow-test.sql
 --
--- 36 assertions. Every line should read [PASS].
+-- 46 assertions. Every line should read [PASS].
 --
 -- Runs the morning and the afternoon through the SAME calls the app makes, in
 -- the same order, as the same roles. The point is to catch things that only
@@ -332,3 +332,113 @@ select ok('the audit log has the whole day', count(*) > 10) from audit_logs;
 select ok('no notification is stuck unacknowledged and urgent', count(*) = 0)
 from notifications where requires_ack and acknowledged_at is null
   and created_at < now() - interval '1 hour';
+
+\echo ''
+\echo '################ 14. C3 — A WRITE THAT SAT IN THE QUEUE ################'
+-- The morning run again, this time through a dead spot.
+--
+-- Reset it as the coordinator (staff bypass guard_rider_transition, which is
+-- what the exception queue is for) so there is a live trip to board onto.
+select as_user('00000000-0000-0000-0000-0000000000c1');
+update student_trip_status
+set status='scheduled', board_time=null, dropoff_time=null, check_in_time=null, note=null
+where trip_id = (select id from daily_trips where route_id='00000000-0000-0000-0000-0000000000e1');
+delete from trip_stop_progress
+where trip_id = (select id from daily_trips where route_id='00000000-0000-0000-0000-0000000000e1');
+update daily_trips set status='active', ended_at=null
+where route_id='00000000-0000-0000-0000-0000000000e1';
+
+-- Sam boarded Arun at 07:42 with no signal. The outbox flushed at 07:55, so the
+-- row is written NOW carrying a board_time thirteen minutes old. That is exactly
+-- the shape src/lib/outbox.ts sends.
+select as_user('00000000-0000-0000-0000-0000000000d1');
+update student_trip_status
+set status='boarded',
+    board_time = now() - interval '13 min',
+    updated_by = '00000000-0000-0000-0000-0000000000d1',
+    updated_at = now() - interval '13 min'
+where student_id='00000000-0000-0000-0000-000000000022'
+  and trip_id=(select id from daily_trips where route_id='00000000-0000-0000-0000-0000000000e1');
+
+select ok('a queued boarding is logged at board time, not at flush time (C3)',
+          changed_at < now() - interval '10 min')
+from audit_logs
+where entity_type='student_trip_status' and action='status_change'
+  and entity_id=(select id from student_trip_status
+                 where student_id='00000000-0000-0000-0000-000000000022'
+                   and trip_id=(select id from daily_trips where route_id='00000000-0000-0000-0000-0000000000e1'))
+  -- The reset above wrote its own entry at now(); this is the BOARDING one.
+  and new_value->>'status' = 'boarded'
+order by changed_at desc limit 1;
+
+select ok('the audit entry records that it arrived late (C3)',
+          new_value ? 'queued_offline' and new_value ? 'received_at')
+from audit_logs
+where entity_type='student_trip_status' and action='status_change'
+  and entity_id=(select id from student_trip_status
+                 where student_id='00000000-0000-0000-0000-000000000022'
+                   and trip_id=(select id from daily_trips where route_id='00000000-0000-0000-0000-0000000000e1'))
+  -- The reset above wrote its own entry at now(); this is the BOARDING one.
+  and new_value->>'status' = 'boarded'
+order by changed_at desc limit 1;
+
+select ok('the parent is told when it actually happened, not when we heard (C3)',
+          count(*) = 1)
+from notifications
+where user_id='00000000-0000-0000-0000-0000000000a1'
+  and title like 'Arun boarded%'
+  and body like '%' || to_char(now() - interval '13 min', 'HH12:MI AM') || '%';
+
+select ok('and told why the message is late (C3)', count(*) = 1)
+from notifications
+where user_id='00000000-0000-0000-0000-0000000000a1'
+  and title like 'Arun boarded%' and body like '%had no signal%';
+
+\echo ''
+\echo '################ 15. SELF-SCAN — THE STUDENT SCANS THE VAN ################'
+-- Zoe boards at Elm Close, which is NOT the origin, so the van has to be
+-- recorded as standing there before her scan counts. This is the check that
+-- stops a photographed card boarding anyone from anywhere.
+select as_user('00000000-0000-0000-0000-000000000033');
+select ok('a scan is refused while the van is not at that student''s stop (SCAN)',
+          (board_by_vehicle_code(
+             (select board_code from vehicle_devices
+              where vehicle_id='00000000-0000-0000-0000-000000000091')
+           ) ->> 'reason') = 'van_not_here');
+
+-- The van arrives at Elm Close.
+select as_user('00000000-0000-0000-0000-0000000000d1');
+insert into trip_stop_progress (trip_id, stop_id, arrived_at)
+values ((select id from daily_trips where route_id='00000000-0000-0000-0000-0000000000e1'),
+        '00000000-0000-0000-0000-0000000000f2', now())
+on conflict (trip_id, stop_id) do update set arrived_at = excluded.arrived_at;
+
+select as_user('00000000-0000-0000-0000-000000000033');
+select ok('the same scan boards her once the van is there (SCAN)',
+          (board_by_vehicle_code(
+             (select board_code from vehicle_devices
+              where vehicle_id='00000000-0000-0000-0000-000000000091')
+           ) ->> 'reason') = 'boarded');
+
+select ok('scanning twice is not an error (SCAN)',
+          (board_by_vehicle_code(
+             (select board_code from vehicle_devices
+              where vehicle_id='00000000-0000-0000-0000-000000000091')
+           ) ->> 'reason') = 'already_aboard');
+
+-- Priya boards at Oak Road, the ORIGIN, which a driver never marks an arrival
+-- at. Without the origin branch every afternoon scan at the school would fail.
+select as_user('00000000-0000-0000-0000-000000000011');
+select ok('the origin stop needs no recorded arrival (SCAN)',
+          (board_by_vehicle_code(
+             (select board_code from vehicle_devices
+              where vehicle_id='00000000-0000-0000-0000-000000000091')
+           ) ->> 'reason') = 'boarded');
+
+select ok('a self-scan says scanned, not driver-confirmed (SCAN)', count(*) = 1)
+from notifications
+where user_id='00000000-0000-0000-0000-0000000000a1'
+  and title like 'Priya boarded%' and body like 'Scanned aboard%';
+
+select ok('an unknown card boards nobody (SCAN)',
+          (board_by_vehicle_code('not-a-real-code') ->> 'reason') = 'unknown_code');

@@ -17,6 +17,93 @@ Newest first.
 
 ## 26 August 2026
 
+### C3 — the offline queue. The last of the twenty-two.
+
+A dead zone no longer loses what the driver recorded. **All twenty-two findings
+from the 10 August design review are now closed.**
+
+The realistic failure was never that a driver stops when a write fails. It is
+that they keep driving, because they have to — so ten minutes of dead zone was
+three stops with no boarding record, reconstructed afterwards from somebody's
+memory, in an app whose entire job is knowing where children are.
+
+**It is a write-ahead log, not a retry.** `src/lib/outbox.ts` writes every driver
+mutation to SQLite *before* attempting it, not after it fails. "The app was killed
+mid-request" is then a recoverable state rather than a lost boarding. Online the
+path is unchanged — one round trip, awaited, real errors inline — so nothing about
+the connected case got slower or vaguer.
+
+**Ordering is the contract.** One serial queue, drained in insertion order, and a
+network failure *stops* the drain rather than skipping the entry. Replaying
+"boarded Priya" after "departed Oak Road" would hit `guard_stop_departure()` with
+a different roster than the driver was looking at. The server sees the same
+sequence of facts the driver produced.
+
+**Idempotency is by construction, not bookkeeping.** Rider writes are UPDATEs
+keyed by row id, so applying one twice lands the same row in the same state.
+`guard_stop_departure()` already refuses to let a driver overwrite a recorded
+arrival, so a replayed arrival keeps the original timestamp. Inserts carry a
+client-generated id through an ignore-duplicates upsert, so a half-finished flush
+cannot file the same breakdown four times.
+
+**The optimistic overlay, which the plan did not ask for and which the feature
+does not work without.** Without it a driver taps Boarded in a dead zone, watches
+the card not change, and taps again — and again — because as far as the screen is
+concerned nothing happened. Every extra tap is another queue entry. `withPending()`
+lays the unsent writes back over what the server last said, and mirrors
+`guard_stop_departure()`'s rule that a recorded time never moves, so the screen
+does not promise something the server will refuse. **Failed** actions are
+deliberately *not* overlaid: the server rejected them, so they did not happen.
+
+**The banner, because silence here is the bug.** *"3 actions not yet saved"* in
+amber, worded so a driver does not re-tap: they are on the phone, they will send,
+keep driving. A **refused** write is separate and red — it names each one, says
+nobody else knows about it, and does not go away on its own.
+
+**Four things are deliberately NOT queued**, and the app says why rather than
+pretending:
+
+- **Undo** — the server measures its window against `now()`, so a queued undo is
+  refused by definition. Queueing it would mean offering a driver an undo that
+  silently evaporates.
+- **The rider lookup** — a question, not a record, and worthless ten minutes late.
+- **`board_at_other_stop`** — server-validated. The plain Boarded button still
+  works offline; losing the stop detail beats losing the boarding.
+- **`report_delay`** — cumulative, so a replay double-counts and re-times every
+  family on the route.
+
+**The server half is the half that decides whether any of this is true.** An
+outbox that faithfully replays a boarding and then lets Postgres stamp it `now()`
+has not solved the problem, it has hidden it. Before
+`2026-08-26b-c3-offline-queue.sql`, a boarding at 07:42 flushed at 07:55 told the
+mother *"Confirmed by the driver at 7:55 AM"* and wrote 07:55 into `audit_logs` —
+the file a dispute about a child gets settled from.
+
+- `rider_event_time()` is now the single definition of when something happened,
+  used by the audit log and the notification alike so the two cannot disagree.
+- It does **not** blindly trust `updated_at`. On an UPDATE that does not name the
+  column in its SET list, `new.updated_at` holds the *previous* write's value —
+  and the student check-in path is exactly that. Each status takes its own
+  purpose-built timestamp first.
+- **When the two times differ, the message says so.** *"(Reported at 7:55 AM — the
+  van had no signal at the time.)"* A parent reading 7:42 on a phone that buzzed
+  at 7:55 has otherwise been handed a thirteen-minute gap with no explanation, and
+  the explanation is the reassuring one. The audit entry gets `queued_offline` and
+  a `received_at` alongside.
+- The S7 departure alert already quoted `departed_at` rather than `now()`, so its
+  *time* was right; it gained the same explanation of the lag.
+
+`outbox.web.ts` is a straight pass-through. Referencing expo-sqlite in the web
+bundle kills the build, and nobody drives a route from a browser — an offline log
+at a coordinator's desk would solve a problem that does not exist while adding a
+layer that can lose data.
+
+`supabase/patches/flow-test.sql` grew from 36 assertions to **46**, covering a
+queued boarding's clock, its audit entry, both parent messages, and the self-scan
+paths. **It has not been run against a live Postgres in this session** — no local
+credentials — so `psql bustest -f supabase/patches/flow-test.sql` on a scratch
+database is still owed before the demo.
+
 ### The scan direction inverted: students scan the van
 
 Until today `attendance_mode = 'scan'` meant the **driver** pointed a camera at a
@@ -94,9 +181,9 @@ the function *bodies* rather than merely asserting they exist — a
 `board_by_vehicle_code()` missing its at-the-stop guard would pass an existence
 check and ship the entire risk of this feature by accident.
 
-**Not done here: C3, the offline queue**, which is still the one open item from
-the 10 August review. It matters more now than it did this morning — a scan that
-never lands is a child marked absent while sitting on the van — and it is next.
+**C3, the offline queue, landed the same day** — see the entry above. It matters
+more with self-scan than it did without: a scan that never lands is a child
+marked absent while sitting on the van.
 
 ---
 

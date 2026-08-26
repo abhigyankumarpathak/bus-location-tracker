@@ -51,7 +51,13 @@ with expected(kind, name, label) as (values
   -- standing anywhere on the route would be the whole risk of this feature
   -- shipped by accident, so check the stop guard is actually in the body.
   ('body',   'board_by_vehicle_code|van_not_here', 'SCAN · van must be AT the stop'),
-  ('body',   'notify_on_rider_status|self_scanned','SCAN · parents told who confirmed it')
+  ('body',   'notify_on_rider_status|self_scanned','SCAN · parents told who confirmed it'),
+  -- C3, the server half (patch 6). The queue is on the phone; these are what
+  -- stop a queued boarding being RECORDED at flush time instead of board time.
+  ('func',   'rider_event_time',            'C3 · when it happened, not when we heard'),
+  ('body',   'log_rider_status|rider_event_time',     'C3 · audit log uses it'),
+  ('body',   'notify_on_rider_status|rider_event_time','C3 · notifications use it'),
+  ('body',   'notify_on_stop_departure|late_txt',     'C3 · late alerts say why')
 )
 select
   case when found then '✅ OK  ' else '❌ MISSING' end as status,
