@@ -6,12 +6,47 @@ A feature-by-feature account of the app as it stands, checked against the
 Written to be read by someone who has the blueprint in front of them and wants to
 know: *did they build what we asked for, and where did they not?*
 
-**Last updated 10 August 2026.** Two companion documents:
+**Last updated 13 August 2026.** Two companion documents:
 [CHANGELOG](../CHANGELOG.md) for what changed when, and
 [REMEDIATION](REMEDIATION.md) for problems a flow review found that the blueprint
-never raised — including four where a child can go unaccounted for and nobody is
-alerted. This document answers "does it match the brief"; that one answers "is the
-brief enough".
+never raised. This document answers "does it match the brief"; that one answers
+"is the brief enough".
+
+> ## ⚡ You can switch to a LITE version instead of this one
+>
+> **This document describes the FULL platform only.** There is a second, much
+> smaller product available as an alternative — and switching to it is a live
+> option, not a hypothetical.
+>
+> | | **Full** (this document) | **Lite** |
+> | --- | --- | --- |
+> | Answers | *Where is my child, and who has them?* | *Where is the bus, and when does it reach my stop?* |
+> | Roles | 5 — student, parent, driver, coordinator, admin | 3 — student, parent, admin |
+> | Driver app | Yes — boarding, drop-off, the whole custody record | **None.** No driver in the app at all |
+> | Rider statuses | 9, with an enforced transition table | **None.** Nothing tracks a child |
+> | Position from | The driver's phone | **A GPS tracker fitted to the van** |
+> | Tables | ~25 | ~7 |
+> | Families can | Check in, report absences, see the full timeline | **Watch. Nothing else.** |
+> | Alerts | 15 min, 5 min, plus boarding/drop-off/delay/exception | 15 min, 5 min, **and “the bus is at your stop”** |
+>
+> Lite is **not a reduced build of this app and not a feature flag.** It is a
+> separate project in `bus-tracking-app-lite/`, a sibling directory, with its own
+> schema — and **its own README, CHANGELOG and FEATURES**. Nothing in this repo
+> changes and nothing here is switched off. If you switch, this app keeps working
+> exactly as documented below; you simply run the other one.
+>
+> Choosing lite is choosing a different product: it never claims to know where a
+> *child* is, only where a *vehicle* is. That is the entire trade — you give up
+> the custody record, and in exchange nothing can be wrong about a child.
+>
+> **Status: being built — phase 3 of 6, as of 13 August 2026.** It exists as
+> code, in `bus-tracking-app-lite/`. Accounts work, and an admin can describe the
+> whole operation — buses and their tracker keys, stops, the order a bus passes
+> them, and who watches which one — and see it on a map. Nothing reports a
+> position until phase 4, so no bus is on that map yet, and the parent and student
+> screens are still placeholders. Scope, data shape and build order are in
+> [`.claude/skills/barebone/SKILL.md`](../.claude/skills/barebone/SKILL.md); what
+> is actually finished is in that project's own README, CHANGELOG and FEATURES.
 
 Three symbols throughout:
 
@@ -45,7 +80,9 @@ have not been driven end-to-end with real accounts yet.
 
 **Runs on all three platforms** from one codebase: `npx expo run:ios`,
 `npx expo run:android`, `npm run web`. The web build is what lets a coordinator
-work at a desk, which is what §7.3 was really asking for.
+work at a desk, which is what §7.3 was really asking for — and since
+13 August 2026 it has a **real map** in it, drawn with Leaflet, rather than the
+route diagram it used to show. Maps were the last thing the browser could not do.
 
 **Two features are built but switched off**, because the blueprint excludes them:
 live GPS and payments. "Switched off" here means a flag, not a stub — as of
@@ -56,9 +93,11 @@ which is what makes §8's cost-and-battery objection answerable rather than
 ignored.
 
 **QR boarding is built** (`attendance_mode = 'scan'`), on both legs of the day.
-The **driver scans the student**, never the reverse — a code the student scanned
-themselves would be a self-reported boarding, which §2.1 forbids. NFC is not
-built; QR does the same job on every phone with no extra hardware.
+**Students scan a printed card in the van** and board themselves; the driver
+watches a headcount instead of tapping names. This inverted on 26 August 2026 at
+the operator's request — see the section below for what that costs and the three
+checks that narrow it. NFC is not built; QR does the same job on every phone with
+no extra hardware.
 
 **Absences cover a date range.** A month's holiday is one request, not twenty.
 
@@ -306,8 +345,9 @@ because it blocks the trip from closing.
 | **Today's Trips** — start time, vehicle, status | ✅ |
 | **Trip Overview** — ordered stops, student count, capacity, planned times, Start Trip, Report Delay | ✅ |
 | **Stop Roster** — students at each stop with name, status, actions | ⚠️ No **photo or initials**. The blueprint asks for a photo; storing children's photographs is a privacy decision that should not be made by a developer on a whim, so it is left out pending your call. |
-| **Student Action** — Boarded, Absent, No-Show, Parent Pickup, Dropped Off Safely, Unable to Drop Off | ✅ All six |
+| **Student Action** — Boarded, Absent, No-Show, Parent Pickup, Dropped Off Safely, Unable to Drop Off | ✅ All six, plus three added 12 August: **“Boarding anyway — turned up”** for a child the record says is away (a note is required, by the database), **“Boarding here instead”** for a child at the wrong hub on the right van, and a **look-up** for a child who is not on this driver's list at all — which names whose van they belong on without exposing anything else. |
 | **Incident** — type, affected student/vehicle, description, severity | ⚠️ All of that, **except the optional photo** |
+| **Leaving a stop** — the same check as End Trip, eight stops earlier | ✅ Added 12 August. The driver cannot quietly pull away from a child with no outcome: the departure is held and everyone unresolved is listed with their buttons inline. Leaving anyway is always allowed — it files an incident per child and tells their guardians and the office immediately. |
 | **End Trip** — checklist confirming every student has a final status | ✅ **Enforced by the database**, not just checked in the UI |
 
 | Rule | Status |
@@ -315,7 +355,7 @@ because it blocks the trip from closing.
 | Large, simple buttons; discourage interaction while moving | ✅ Large touch targets; the driver gets a stack, not tabs, so there is nothing to browse |
 | Cannot complete a trip with an unresolved student | ✅ *"Cannot end the trip: 2 student(s) still have no final status."* |
 | Unable to Drop Off creates an urgent coordinator exception | ✅ And blocks trip closure until a coordinator resolves it |
-| Corrections after confirmation are staff-only, with an audit reason | ✅ |
+| Corrections after confirmation are staff-only, with an audit reason | ✅ Staff overrides still demand a reason. Since 12 August the driver also gets a **90-second undo** on their own last action — it writes a *compensating* audit entry rather than a silent revert, so the log reads "this happened, then it was taken back". Beyond the window it is staff-only as before. |
 | Driver sees minimum parent contact information | ✅ None, unless there is an exception |
 
 ### 5.2 Coordinator dashboard
@@ -326,7 +366,7 @@ because it blocks the trip from closing.
 | Trip board — driver, vehicle, progress, status | ✅ |
 | Student exceptions — no-show, late change, missing check-in, unable to drop off | ✅ |
 | Assignments — replace driver/vehicle before start, revalidate capacity | ✅ |
-| Communication — route-wide or child-specific notification | ⚠️ Announcements go to **everyone**. Per-route and per-child targeting is not built. |
+| Communication — route-wide or child-specific notification | ✅ Built 12 August. An announcement can target one route — reaching its riders, their guardians and its driver — or everybody. The fan-out is a database trigger, so it cannot be skipped by whatever posts the announcement. |
 | Daily closeout — verify all trips complete and all statuses resolved | ✅ |
 
 ---
@@ -429,6 +469,7 @@ the same trip data and were easier to get right together.
 | Backend logic | Cloud Functions | **Postgres triggers + Edge Functions** | The trip-close guard, the cutoff decision, and the audit log are triggers, so **no write path can bypass them**. As Cloud Functions they would be application code that another path could route around. |
 | Notifications | In-app, then FCM | In-app + Expo Push | Same shape. |
 | Maps | Hub pins only; GPS postponed | Hub pins by default; live van **behind a flag** | As instructed — and the flag is now wired end to end rather than reserved, so the decision to enable it is a policy call, not a build. |
+| The map itself | — | `expo-maps` on iOS and Android, **Leaflet on web** | One component, `Map.tsx`, with a `Map.web.tsx` beside it that Metro resolves first for web. `expo-maps` has no web implementation at all — importing it in a browser throws at module load — so the split is not a preference, it is the only thing that makes a coordinator's browser map possible. Since 13 August the web half is a real slippy map with dark tiles, numbered stop pins and the van on it; before that it was a diagram of the route order. |
 
 ### Cost
 
@@ -498,27 +539,54 @@ first — which is the information §4.2's "Approaching" step was asking for.
 
 Not a switched-off feature — it works, and the office chooses per organisation.
 
-The student's Today screen shows a QR code, one per leg of the day. The driver
-gets **"Scan students on"** at each stop once the van has arrived there, and the
-camera stays open between students.
+**The direction inverted on 26 August 2026.** It used to be the driver scanning a
+code on each student's phone. It is now the student scanning a **printed card in
+the van**, because the operating requirement is to minimise what the driver
+touches, and one driver action per child is not that. Staff print the cards from
+Setup → Fleet.
 
-**The driver scans the student, never the reverse.** A code taped inside the van
-that students scanned themselves would be a *self-reported boarding* — the one
-thing §2.1 forbids, because a child can scan it from the pavement and then miss
-the van. Because the driver's phone does the scanning, the write is still a driver
-write and **no RLS policy changed** to enable any of this.
+The driver's job at a pickup stop is now: **Arrived → watch "9 of 11 aboard" →
+Departed.** Three taps, whatever the headcount.
 
-The code lives on the trip row, not the student, so it differs morning and
-afternoon and yesterday's screenshot is worthless. A code scanned off a
-classmate's phone identifies *that classmate* — the driver sees the wrong name and
-stops.
+**What the inversion costs, stated plainly.** A self-scan is *not* a driver
+observation, and §2.1 makes the driver the official record precisely because a
+child can scan from the pavement and then not get on. Three things narrow that,
+and none of them closes it:
 
-A scan that does not belong to this trip gets a real answer rather than "unknown
-code": `identify_boarding_code()` reports *"Priya rides Route 2 with Sam, not this
-van"*, which is also how a child about to board the **wrong vehicle** gets caught.
+1. The card names a **vehicle**, not a trip. On its own it says nothing and does
+   nothing; every decision is made server-side against the trip that vehicle is
+   running at that second.
+2. It only works while the van is **standing at that student's own stop** —
+   arrived, not yet departed. A photograph of the card is worthless at home, on
+   another day, or at somebody else's hub.
+3. The driver still confirms the departure, and the app still refuses to leave a
+   stop while a rostered student there has no outcome. **That confirmation is what
+   ratifies the scans.**
 
-Marking students on by name still works underneath. A flat phone has no QR and the
-van still has to leave.
+The residual risk is a student scanning from within range and then not boarding.
+The departure confirmation is what catches it, because the driver is looking at a
+count.
+
+**The RLS policy did not change.** A student calling PostgREST directly still
+cannot write `boarded` — `students check in only` still caps them at `waiting`.
+`board_by_vehicle_code()` is `security definer` and is the only door.
+
+**The card is a credential.** `board_code` lives in `vehicle_devices` beside the
+GPS key but is deliberately *not* the GPS key: `ingest-location` accepts
+`device_key` with no user JWT, so a card carrying it would let any rider forge the
+van's position. Admins can reissue a card from Setup when one is photographed.
+
+A student who scans the wrong van is told which one is theirs — *"This is Van 2,
+and you are not on it today. You ride Route 1 with Sam."* — which is also how a
+child about to board the **wrong vehicle** gets caught.
+
+Marking students on by name still works underneath. A flat phone cannot scan and
+the van still has to leave.
+
+*Left over from the old direction:* `boarding_code` on `student_trip_status` and
+`identify_boarding_code()` are unused by any screen. Kept rather than dropped
+because removing a column mid-pilot buys nothing; worth deleting once self-scan
+has survived a term.
 
 ### One tap for the school gate — exception-based drop-off
 
@@ -688,7 +756,14 @@ Nothing here is hidden elsewhere in this document.
 6. **No `companyId`** — single-tenant. The expensive one to change later.
 7. **NFC not built.** The `attendance_mode` flag has two values, `manual` and
    `scan`, and `scan` means QR. QR needs no hardware and works on every phone.
-8. **No SMS fallback.** Urgent notifications now record delivery and demand
+8. **Times are wall-clock, and the timezone is a setting.** `planned_arrival`
+   and `planned_departure` carry no zone; `organization.time_zone` says what
+   clock they are on and everything resolves through `local_ts()`. Set it in
+   Setup → Watchdog. Left on the UTC default while the vans run elsewhere, the
+   watchdog, the arrival alerts, the change cutoff and the check-in window are
+   all wrong by the same number of hours. There is a warning in the UI while it
+   is still on the default.
+9. **No SMS fallback.** Urgent notifications now record delivery and demand
    acknowledgement, and the watchdog escalates silence to the office — but the
    final hop is still a person picking up a phone, not an automated SMS. That
    needs a provider decision.
@@ -733,6 +808,15 @@ That is what caught the one bug the individual tests could not — see the
 stale-note fix in the changelog. Every guard was correct alone; the defect only
 existed when a parent's absence reason and a driver's boarding note met in the
 same column.
+
+The same suite runs under two timezone settings and **shows a different result**
+for each: 36/36 with the operation's zone set correctly, and a failing
+arrival-alert assertion when it is left on UTC. A test that passes either way
+would not be testing anything.
+
+`supabase/patches/verify.sql` is the companion for a live database: 29 checks
+that every table, column, function and trigger exists — and, for the two
+functions that were fixed rather than added, that the body is the corrected one.
 
 ## The rider state machine
 

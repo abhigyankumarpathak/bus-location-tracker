@@ -93,6 +93,9 @@ export default function ParentMap() {
         lng: at.lng,
         title: `${stop.seq}. ${ref.stopName(stop.id) ?? 'Stop'}`,
         kind: myStopIds.has(stop.id) ? 'pickup' : 'stop',
+        // The order the van visits them is the whole point of this screen, so
+        // on web the number rides on the pin rather than hiding in a popup.
+        badge: String(stop.seq),
       });
     }
 

@@ -15,6 +15,228 @@ Newest first.
 
 ---
 
+## 26 August 2026
+
+### The scan direction inverted: students scan the van
+
+Until today `attendance_mode = 'scan'` meant the **driver** pointed a camera at a
+code on each student's phone. It now means the **student** points a camera at a
+printed card in the van. The operating requirement that forced it is simple:
+minimise what the driver touches. One driver action per child is faster than
+tapping a name, but it is still one decision per child.
+
+**The driver's job at a pickup stop is now three taps regardless of headcount** —
+Arrived, watch *"9 of 11 aboard"* settle, Departed.
+
+**What it costs, and why it is not a safety regression on its own.** A self-scan
+is not a driver observation, and §2.1 makes the driver the official record
+precisely because a child can scan from the pavement and then not get on. Three
+things narrow that:
+
+- The printed card names a **vehicle**, not a trip, a date or a student. On its
+  own it says nothing. Every decision is made server-side in
+  `board_by_vehicle_code()` against the trip that vehicle is running at that
+  second.
+- **It only works while the van is standing at that student's own stop** —
+  arrived, not yet departed. This is the check that matters. Without it the card
+  boards anyone, anywhere, for the whole length of the run, and a photograph of it
+  is an attendance machine. With it, a photograph is worthless at home, on another
+  day, or at somebody else's hub.
+- **The driver still confirms the departure.** `guard_stop_departure()` is
+  untouched and still refuses to leave a stop while a rostered student there has
+  no outcome. That confirmation is what ratifies the scans, which is what makes
+  this a faster route to the same record rather than a weaker record.
+
+The residual risk is a student scanning from within range and then not boarding.
+The departure confirmation catches it, because the driver is looking at a count
+rather than a list.
+
+**No RLS policy was loosened.** `students check in only` still caps a student at
+`waiting`, so a student calling PostgREST directly still cannot write `boarded`.
+`board_by_vehicle_code()` is `security definer` and is the only door.
+
+**The card is a credential, and deliberately not the GPS one.** `board_code` is a
+new column on `vehicle_devices`, beside `device_key` but separate from it:
+`ingest-location` accepts `device_key` **with no user JWT**, so printing that on a
+card inside the van would have handed every rider the ability to forge the van's
+position. `rotate_board_code()` reissues a card that has been photographed, admin
+only, and it is in Setup rather than requiring a database console at the moment
+somebody notices.
+
+**Elsewhere:**
+
+- Staff print the cards from **Setup → Fleet**, one van at a time, laid out
+  roughly as the card should end up on the door.
+- A student who scans the wrong van is told which one is theirs — *"This is Van 2,
+  and you are not on it today. You ride Route 1 with Sam."* That is the same
+  wrong-vehicle catch the old direction had, from the other end.
+- Scanning does **not** silently contradict an absence. A student the office has
+  down as absent is told to see the driver, because that path is C4's "Boarding
+  anyway" and it needs a driver and a note.
+- A second scan says *"You are already marked on board"* rather than reading as a
+  failure. It is the most likely mistap there is.
+- **Parents are told who actually confirmed it.** `notify_on_rider_status()` now
+  says *"Scanned aboard at 7:42 AM. The driver confirms the count before the van
+  leaves"* for a self-scan, instead of claiming the driver confirmed it at a
+  moment when nobody had looked up. Same reason the student's own screen now reads
+  "You scanned on" rather than "Recorded by your driver".
+- `BoardingScanner` had every piece of its copy hardcoded for the driver. It is
+  now direction-agnostic with the wording passed in — hardcoding it is how this
+  needed rewriting the first time.
+- `BoardingPass.tsx` is deleted. `boarding_code` and `identify_boarding_code()`
+  are what remain of the old direction and are now **unused by any screen**; left
+  in place because dropping a column mid-pilot buys nothing, and flagged in
+  FEATURES and the schema for deletion once self-scan has survived a term.
+
+Applied as `supabase/patches/2026-08-26-self-scan.sql` and folded into
+`schema.sql`. `supabase/patches/verify.sql` gained six checks, two of which read
+the function *bodies* rather than merely asserting they exist — a
+`board_by_vehicle_code()` missing its at-the-stop guard would pass an existence
+check and ship the entire risk of this feature by accident.
+
+**Not done here: C3, the offline queue**, which is still the one open item from
+the 10 August review. It matters more now than it did this morning — a scan that
+never lands is a child marked absent while sitting on the van — and it is next.
+
+---
+
+## 13 August 2026
+
+### A real map in the browser
+
+The web build now draws an actual map. Until today it drew a **diagram** — the
+route as an ordered line of dots down a rail, with a note telling the reader that
+maps render on the phone app. Honest, and useless to the transport office, which
+runs on the web build.
+
+`src/components/Map.web.tsx` is now [Leaflet](https://leafletjs.com), about 300
+lines of it, with **the seam it replaced left exactly where it was**. That seam is
+the whole reason web works at all: `expo-maps` has no web implementation, and
+`Map.tsx` imports it at the top of the file, so on web that import throws the
+moment a screen mounts — a blank white page, because the component never gets far
+enough to render its own fallback. Metro resolves `Map.web.tsx` first when
+bundling for web, which is what keeps `expo-maps` out of the web bundle and
+Leaflet out of the native one. A runtime `Platform.OS` check would not do it;
+Metro resolves imports at build time.
+
+What is on it, on `app/(parent)/map.tsx`:
+
+- **Tiles**, from CARTO's dark basemap, which sits on the app's own near-black
+  rather than fighting it. Free, with attribution — the credit line is in the
+  corner and moves with the URL if the provider ever changes.
+- **Numbered stop pins.** The stop's position in the run rides *on* the pin, not
+  in a popup you have to click. The parent's own hub is the accent-coloured one.
+- **The route line**, in order, through the stops.
+- **The van**, orange, with a pulse, drawn over the stops rather than under them —
+  and still left off entirely when its last fix is stale, which has not changed.
+
+Three things worth knowing about how it behaves:
+
+**The camera is not driven from props, and that is deliberate.** `Map.tsx` on a
+phone re-points whenever `center` changes. A browser map is something you pan and
+zoom with a mouse, and re-centring on every van fix snatches it back from whoever
+is reading it. So the view frames the **stops**, keyed on the stops alone, and
+then follows the van only once it has actually left the visible area. The first
+framing includes the van, so the small map under a live ETA opens with both the
+van and the hub in shot.
+
+**The wheel does not zoom until you click the map.** Every screen carrying a map
+is one long scrolling page, and a map that grabs the wheel traps the reader
+halfway down it.
+
+**Stop names are staff-entered, and Leaflet renders popup content as HTML.** The
+labels go in as text nodes, and the numbers on the pins are escaped, so a stop
+named after someone's idea of a joke cannot inject anything.
+
+The one change outside the web file is an optional `badge?: string` on
+`MapMarker`, set from `stop.seq`. It is read by the web map alone — neither native
+map can draw text on a marker, and neither needs to, because the titles this app
+passes are already numbered. It is declared in both files because those two
+declarations being identical is the only thing making them one component.
+`Map.tsx`'s rendering is untouched, and so is the stop list under the map: the map
+replaced the rail diagram, not the addresses.
+
+Verified, rather than assumed: `expo export -p web` emits a
+`_expo/static/css/leaflet-*.css` that `index.html` links, and the tile URL is in
+the JS bundle; `expo export -p ios` contains **no Leaflet at all**, which is the
+proof that the `.web.tsx` seam is doing its job. Typecheck is clean — `leaflet.css`
+needed a `declare module '*.css'` in a new root `globals.d.ts`, because Metro
+bundles the import happily and TypeScript does not know what it is.
+
+> One thing to remember if `app.json` ever changes. `web.output` is `"single"`, a
+> client-rendered SPA, which is why Leaflet touching `document` at module load is
+> fine. **Change it to `"static"` and the top-level `import L from 'leaflet'` has
+> to move behind a dynamic `import()`**, or the prerender crashes.
+
+### The barebone alternative, built
+
+Nothing in this application changed. The alternative specified earlier today —
+see the entry below — now **exists as code**, in `bus-tracking-app-lite/`, the
+sibling directory that was created empty this morning.
+
+It is at **phase 3 of the six** its build order lays out. Accounts work, with the
+same invite-code signup and RLS proven by attacking it directly; an admin can
+describe the whole operation — buses and their tracker keys, stops, the order a
+bus passes them, and who watches which one — and see the stops and the run on a
+map, on a phone or in a browser. No *bus* is on that map yet: nothing reports a
+position until phase 4, and the parent and student screens are still placeholders.
+
+Three roles against six. Eleven tables against twenty-five. No driver in the app
+at all.
+
+This repository is unchanged and nothing here is switched off — the two are
+separate products, not a branch and not a feature flag. Lite keeps its own README,
+CHANGELOG, FEATURES and SETUP, and lite changes do not appear in this changelog.
+The pointer in [FEATURES](docs/FEATURES.md) is still the entire relationship
+between the two; all that changed there is that it no longer says "not built".
+
+### A barebone alternative, specified
+
+Nothing in the application changed. What landed is a **specification for a second,
+much smaller product**, and a note in [FEATURES](docs/FEATURES.md) saying it
+exists.
+
+The full platform is a custody-of-children system: nine rider statuses, driver-
+confirmed boarding, an end-of-trip checklist the database refuses to skip, a
+watchdog on the clock. The alternative answers **one question** — *where is the
+bus, and when does it reach my stop* — and deliberately answers nothing else.
+
+Kept: sign-in for parents, students and admins; invite codes that carry the role;
+an admin assigning each student a bus and a stop, and marking the stops they do
+not use; RLS on everything.
+
+Gone: **the driver role entirely**, and with it rider statuses, boarding
+confirmation, QR scanning, the end-of-trip checklist, trips, route templates, the
+watchdog, change requests, the coordinator role, incidents, and the weekly purge.
+Five roles become three. Around twenty-five tables become seven.
+
+The live position comes from **a GPS tracker fitted to the van**, not a phone —
+which is what makes "no driver" coherent, since no human has to remember to open
+anything. `ingest-location` already accepts exactly that POST and comes across
+largely unchanged. There are **no trips and no schedule**: a bus, an ordered list
+of stops, and three notifications derived from the live fix — 15 minutes away,
+5 minutes away, and *the bus is at your stop*.
+
+It is a **separate project** — `bus-tracking-app-lite/`, a sibling directory to
+this one, created empty today — not a branch and not a feature flag, so this
+codebase is untouched and nothing here is switched off. Choosing it is choosing a
+different product: it never claims to know where a *child* is, only where a
+*vehicle* is.
+
+It **mirrors this project's layout** — same `app/` route groups, same
+`src/lib` + `src/components` split, same `supabase/` shape — with things removed
+rather than rearranged, so porting stays mechanical. And it keeps **its own
+README, CHANGELOG, FEATURES and SETUP**: lite changes never appear in this
+changelog, and this repo is read-only for that work. The single pointer in
+[FEATURES](docs/FEATURES.md) is the entire relationship between the two.
+
+Written up in [`.claude/skills/barebone/SKILL.md`](.claude/skills/barebone/SKILL.md)
+as an invocable skill, with the scope boundary, the data sketch, the alerting
+rules, a six-phase build order, and five questions still open. **No code, no
+schema, no project directory yet** — say the word and it starts at phase 1.
+
+---
+
 ## 12 August 2026
 
 ### The vans are not in UTC
@@ -391,7 +613,7 @@ A design review of the ride flow came first (see
 [docs/REMEDIATION.md](docs/REMEDIATION.md) for what it found and what is still
 outstanding). Four things were built off the back of it.
 
-**Morning arrival at school is now one tap, and names the exceptions**
+**S3 — morning arrival at school is now one tap, and names the exceptions**
 
 - The driver gets **“All N dropped off safely”** at any stop where two or more
   riders are still on board — in practice, the morning arrival at school.

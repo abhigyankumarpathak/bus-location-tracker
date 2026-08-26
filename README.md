@@ -79,6 +79,12 @@ the first admin can get in.
 **Student** — Today (route, hub, planned time, driver's first name, vehicle,
 status, Check In), Club Status, History, read-only Profile.
 
+**Two settings that must be right before this carries anyone:** the operation's
+**timezone** (Setup → Watchdog — stop times are wall-clock and everything
+compares against them) and **`pg_cron`** enabled in Supabase, without which
+nothing checks the clock unless a coordinator happens to have the app open. Both
+are covered in [supabase/SETUP.md](supabase/SETUP.md).
+
 **The watchdog** — the one thing that watches the clock rather than waiting for a
 driver to tap something. Every five minutes during operating hours it raises a
 route that never started, a van overdue at a stop, a child still waiting at a

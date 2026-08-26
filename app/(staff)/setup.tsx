@@ -6,7 +6,8 @@ import { useOrg } from '../../src/lib/org';
 import { supabase } from '../../src/lib/supabase';
 import { useReference } from '../../src/lib/hooks';
 import { geocode } from '../../src/lib/geocode';
-import { ROUTE_TYPE_LABEL } from '../../src/lib/types';
+import QRCode from 'react-native-qrcode-svg';
+import { ROUTE_TYPE_LABEL, encodeVanQr } from '../../src/lib/types';
 import type {
   Hub,
   Profile,
@@ -15,6 +16,7 @@ import type {
   RouteTemplate,
   RouteType,
   Vehicle,
+  VehicleBoardCode,
 } from '../../src/lib/types';
 import {
   Badge,
@@ -143,6 +145,16 @@ export default function StaffSetup() {
   const [drivers, setDrivers] = useState<Profile[]>([]);
   const [assignments, setAssignments] = useState<RouteAssignment[]>([]);
   const [deviceKeys, setDeviceKeys] = useState<Record<string, string>>({});
+  /**
+   * The secret behind each van's printed boarding card. Separate from the GPS
+   * key above and deliberately so — ingest-location accepts that one with no
+   * user JWT, so a card carrying it would let any rider forge the van's
+   * position. Staff-readable (coordinators print the cards); the GPS key stays
+   * admin-only.
+   */
+  const [boardCodes, setBoardCodes] = useState<Record<string, string>>({});
+  /** Which van's card is expanded for printing. One at a time — they are large. */
+  const [showingCard, setShowingCard] = useState<string | null>(null);
 
   /** Which route is expanded, and which panel inside it. */
   const [openRoute, setOpenRoute] = useState<string | null>(null);
@@ -212,6 +224,16 @@ export default function StaffSetup() {
           k.vehicle_id,
           k.device_key,
         ]),
+      ),
+    );
+
+    // The printed boarding cards. Its own RPC rather than a select, because
+    // vehicle_devices is admin-read-only to keep the GPS key out of reach and
+    // this hands back the boarding secret alone.
+    const { data: cards } = await supabase.rpc('vehicle_board_codes');
+    setBoardCodes(
+      Object.fromEntries(
+        ((cards as VehicleBoardCode[]) ?? []).map((c) => [c.vehicle_id, c.board_code]),
       ),
     );
 
@@ -1301,6 +1323,88 @@ export default function StaffSetup() {
                   </Text>
                 ) : null}
 
+                {/*
+                  The printed boarding card.
+
+                  This is the thing students scan to board themselves, so it has
+                  to leave this screen and end up laminated by the van door.
+                  Shown one at a time and only on request: three of these at full
+                  size turns the fleet list into a wall of QR codes.
+
+                  It carries board_code, never device_key — see the note on the
+                  state above for why that distinction is load-bearing.
+                */}
+                {boardCodes[v.id] ? (
+                  showingCard === v.id ? (
+                    <View style={styles.cardPrint}>
+                      <Text style={styles.cardTitle}>Scan to board</Text>
+                      <Text style={styles.cardVan}>{v.label}</Text>
+                      <View style={styles.cardPlate}>
+                        <QRCode
+                          value={encodeVanQr(boardCodes[v.id])}
+                          size={200}
+                          backgroundColor="#FFFFFF"
+                          color="#000000"
+                        />
+                      </View>
+                      <Text style={styles.cardHelp}>
+                        Open the app · Scan to board · Point at this code
+                      </Text>
+                      <Text style={styles.fine}>
+                        Print this, laminate it, and fix it by the door. It only boards a student
+                        whose van is standing at their own stop, so it is useless off the vehicle —
+                        but it is still a credential, and a photograph of it works for as long as it
+                        is on the van.
+                      </Text>
+                      <Row style={styles.wrap}>
+                        <Button
+                          label="Hide"
+                          variant="secondary"
+                          style={styles.grow}
+                          onPress={() => setShowingCard(null)}
+                        />
+                        {isAdmin ? (
+                          <Button
+                            label="Reissue"
+                            variant="danger"
+                            style={styles.grow}
+                            onPress={() =>
+                              Alert.alert(
+                                `Reissue the code for ${v.label}?`,
+                                'Every printed card in this van stops working immediately, and students cannot scan on until a new one is in place. Do this if a card has been photographed or shared.',
+                                [
+                                  { text: 'Cancel', style: 'cancel' },
+                                  {
+                                    text: 'Reissue',
+                                    style: 'destructive',
+                                    onPress: async () => {
+                                      const { error: e } = await supabase.rpc('rotate_board_code', {
+                                        target: v.id,
+                                      });
+                                      if (e) return setError(e.message);
+                                      await load();
+                                      Alert.alert(
+                                        'Code reissued',
+                                        `Print the new card and put it in ${v.label} before its next run.`,
+                                      );
+                                    },
+                                  },
+                                ],
+                              )
+                            }
+                          />
+                        ) : null}
+                      </Row>
+                    </View>
+                  ) : (
+                    <Button
+                      label="Boarding card"
+                      variant="secondary"
+                      onPress={() => setShowingCard(v.id)}
+                    />
+                  )
+                ) : null}
+
                 <Row>
                   <Button
                     label="Edit"
@@ -1748,7 +1852,8 @@ export default function StaffSetup() {
               <Text style={styles.name}>Attendance</Text>
               <Text style={styles.fine}>
                 How riders are marked on board. Manual: the driver taps each student by name. Scan
-                (QR): the student shows a code and the driver scans it — on both legs of the day.
+                (QR): students scan a printed card in the van and board themselves — on both legs
+                of the day.
               </Text>
             </View>
             <Row style={styles.wrap}>
@@ -1766,13 +1871,19 @@ export default function StaffSetup() {
               />
             </Row>
             {org?.attendance_mode === 'scan' ? (
-              <Text style={styles.fine}>
-                Students see a code on their Today screen; drivers get a “Scan students on” button at
-                each stop once they have arrived. The code is per trip, so it changes every day and a
-                screenshot is useless tomorrow. The driver does the scanning — a code the student
-                scanned themselves would be a self-reported boarding, which §2.1 forbids. Marking
-                students on by name still works underneath, for a flat phone.
-              </Text>
+              <>
+                <Text style={styles.fine}>
+                  Print a card per van from the Fleet tab and fix it by the door. Students tap “Scan
+                  to board”; the driver watches a headcount instead of tapping eleven names.
+                </Text>
+                <Text style={styles.warn}>
+                  A self-scan is not a driver observation. The server refuses one unless that van is
+                  standing at that student's own stop, and the driver still confirms the departure —
+                  which is what ratifies the scans. Switch back to Manual if a card is lost and you
+                  have not printed a replacement. Marking students on by name still works underneath,
+                  for a flat phone.
+                </Text>
+              </>
             ) : (
               <Text style={styles.fine}>
                 NFC is not built. QR covers the same job on every phone without extra hardware.
@@ -1880,6 +1991,23 @@ const styles = StyleSheet.create({
   body: { fontSize: 14, color: theme.muted, lineHeight: 20 },
   fine: { fontSize: 12, color: theme.faint, lineHeight: 17 },
   warn: { fontSize: 12, color: theme.warn, lineHeight: 17 },
+
+  // The printable boarding card. Laid out roughly as it should end up on the
+  // van door, so what staff approve on screen is what they tape up.
+  cardPrint: {
+    gap: 10,
+    alignItems: 'center',
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: theme.border,
+  },
+  cardTitle: { fontSize: 20, fontWeight: '700', color: theme.text },
+  cardVan: { fontSize: 14, fontWeight: '600', color: theme.accent },
+  // White regardless of theme: a camera needs the contrast, and this gets
+  // printed on paper.
+  cardPlate: { backgroundColor: '#FFFFFF', padding: 14, borderRadius: 14 },
+  cardHelp: { fontSize: 13, color: theme.text, textAlign: 'center' },
+
   panel: { gap: 10, borderTopWidth: 1, borderTopColor: theme.border, paddingTop: 12 },
   stopRow: {
     gap: 8,
