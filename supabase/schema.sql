@@ -1292,11 +1292,51 @@ create trigger on_change_request_applied after insert or update on change_reques
 -- Notifications (blueprint §6.2 matrix) + audit log
 -- ---------------------------------------------------------------------------
 
+-- C3: when the thing being recorded actually happened, as opposed to when
+-- Postgres heard about it.
+--
+-- With an offline queue on the driver's phone those are routinely minutes apart:
+-- a boarding at 07:42 in a dead spot reaches the server at 07:55. Logging and
+-- announcing it as 07:55 would make the audit log — the file a dispute about a
+-- child gets settled from — quietly wrong.
+--
+-- updated_at is the obvious answer and is wrong about a third of the time: on an
+-- UPDATE that does not name the column in its SET list, `new.updated_at` holds
+-- the PREVIOUS write's value. The student check-in path is exactly that. So each
+-- status takes its own purpose-built timestamp first, and updated_at is believed
+-- only when this write actually moved it.
+--
+-- One definition, used by both the audit log and the notification, because they
+-- describe the same event and must not disagree about its time.
+create or replace function rider_event_time(
+  new_row student_trip_status,
+  old_row student_trip_status
+) returns timestamptz
+language sql stable set search_path = public as $$
+  select coalesce(
+    case new_row.status
+      when 'boarded'     then new_row.board_time
+      when 'dropped_off' then new_row.dropoff_time
+      when 'waiting'     then new_row.check_in_time
+      else null
+    end,
+    case when new_row.updated_at is distinct from old_row.updated_at
+         then new_row.updated_at end,
+    now()
+  );
+$$;
+
+revoke execute on function rider_event_time(student_trip_status, student_trip_status)
+  from public, anon, authenticated;
+
 create or replace function notify_on_rider_status() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare
   student_name text;
-  when_txt text := to_char(now(), 'HH12:MI AM');
+  evt timestamptz := rider_event_time(new, old);
+  when_txt text := to_char(evt, 'HH12:MI AM');
+  -- C3: this notification is about something that happened a while ago.
+  late boolean := now() - evt > interval '2 minutes';
   title text;
   body text;
   kind_txt text := new.status::text;
@@ -1410,6 +1450,15 @@ begin
       return new;
   end case;
 
+  -- C3: explain the gap rather than leaving a parent to invent one. A message
+  -- saying 7:42 that arrives at 7:55 reads as a system nobody is watching; the
+  -- same message saying why reads as a van in a dead spot, which is what
+  -- happened.
+  if late then
+    body := body || ' (Reported at ' || to_char(now(), 'HH12:MI AM')
+            || ' — the van had no signal at the time.)';
+  end if;
+
   if audience is not null then
     insert into notifications (user_id, title, body, kind)
     select distinct u, title, body, kind_txt
@@ -1463,15 +1512,28 @@ create trigger on_boarding_after_away before update on student_trip_status
 -- overrides; the app collects it and it lands in `reason` here.
 create or replace function log_rider_status() returns trigger
 language plpgsql security definer set search_path = public as $$
+declare
+  evt timestamptz := rider_event_time(new, old);
 begin
   if new.status is distinct from old.status then
-    insert into audit_logs (entity_type, entity_id, action, old_value, new_value, reason, changed_by)
+    insert into audit_logs (
+      entity_type, entity_id, action, old_value, new_value, reason, changed_by, changed_at
+    )
     values (
       'student_trip_status', new.id, 'status_change',
       jsonb_build_object('status', old.status),
-      jsonb_build_object('status', new.status),
+      jsonb_build_object('status', new.status)
+        -- C3: only when they differ enough to matter. Stamping every routine
+        -- online write with a received_at equal to its changed_at is noise in
+        -- the one file that has to stay readable.
+        || case
+             when now() - evt > interval '2 minutes'
+               then jsonb_build_object('received_at', now(), 'queued_offline', true)
+             else '{}'::jsonb
+           end,
       new.note,
-      auth.uid()
+      auth.uid(),
+      evt
     );
   end if;
   return new;
@@ -2784,6 +2846,7 @@ create or replace function notify_on_stop_departure() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare
   stop_name text;
+  late_txt text := '';
 begin
   if new.departed_at is null then return new; end if;
   if tg_op = 'UPDATE' and old.departed_at is not null then return new; end if;
@@ -2794,6 +2857,15 @@ begin
   left join schools s on s.id = rs.school_id
   where rs.id = new.stop_id;
 
+  -- C3: this already quoted departed_at rather than now(), so the TIME was
+  -- right. What was missing is the explanation when it lands a quarter of an
+  -- hour afterwards — for the parent's most-asked question, that is the
+  -- difference between a useful alert and a confusing one.
+  if now() - new.departed_at > interval '2 minutes' then
+    late_txt := ' (Reported at ' || to_char(now(), 'HH12:MI AM')
+                || ' — the van had no signal at the time.)';
+  end if;
+
   -- Grouped per guardian (N1): a parent with two children on the same van gets
   -- one message naming both, not two pushes a second apart.
   insert into notifications (user_id, title, body, kind)
@@ -2802,7 +2874,7 @@ begin
            -- Past simple reads correctly for one child or several; "has left"
            -- does not once the names are collapsed.
            || ' left ' || stop_name,
-         'The van pulled away at ' || to_char(new.departed_at, 'HH12:MI AM') || '.',
+         'The van pulled away at ' || to_char(new.departed_at, 'HH12:MI AM') || '.' || late_txt,
          'in_transit'
   from student_trip_status sts
   join profiles pr on pr.id = sts.student_id

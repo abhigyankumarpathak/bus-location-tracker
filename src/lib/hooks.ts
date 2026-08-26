@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useId, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { supabase } from './supabase';
+import { useOutbox, withPending } from './outbox';
 import type {
   AppNotification,
   DailyTrip,
@@ -206,16 +207,28 @@ export function useTripStatuses(date: string = today()) {
     };
   }, [date, instance, reload]);
 
+  // C3: the driver's unsent writes, laid back over what the server last said.
+  //
+  // Without this a driver in a dead zone taps Boarded, watches the card not
+  // change, and taps it again — because as far as the screen is concerned
+  // nothing happened. Every extra tap is another queue entry. On web and for
+  // every non-driver role the queue is always empty and this is a pass-through.
+  const { actions } = useOutbox();
+  const view = useMemo(
+    () => withPending({ rows, trips, progress }, actions),
+    [rows, trips, progress, actions],
+  );
+
   return {
-    rows,
-    trips,
-    progress,
+    rows: view.rows,
+    trips: view.trips,
+    progress: view.progress,
     drivers,
     loading,
     reload,
     driverOf: (id: string | null | undefined) => drivers.find((d) => d.id === id) ?? null,
     stopProgressOf: (tripId: string | null | undefined, stopId: string | null | undefined) =>
-      progress.find((p) => p.trip_id === tripId && p.stop_id === stopId) ?? null,
+      view.progress.find((p) => p.trip_id === tripId && p.stop_id === stopId) ?? null,
   };
 }
 

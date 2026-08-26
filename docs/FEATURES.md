@@ -109,9 +109,15 @@ a trip that never ended, a child still aboard after the last stop, and an urgent
 message nobody has acknowledged — each **once**, clearing itself when the
 condition goes away.
 
-**Twenty-one of the twenty-two findings** from the 10 August design review are
-closed as of 12 August. The exception is the offline queue — see
+**All twenty-two findings** from the 10 August design review are closed, the last
+of them — the offline queue — on 26 August. See
 [the remediation plan](REMEDIATION.md).
+
+**A dead zone no longer loses driver actions.** Every mutation the driver makes
+is written to a local log on the phone *before* it is attempted, replayed in
+order when signal returns, and shown as *"3 actions not yet saved"* while it
+waits. A boarding recorded at 07:42 and sent at 07:55 is logged and announced as
+**07:42**, with the delay stated rather than hidden.
 
 **One thing the blueprint did not ask for:** a weekly archive and purge. Every
 Sunday each student's week is rolled into a single report and sent to their
@@ -780,14 +786,13 @@ never raised, several of them safety-critical. They have their own document:
 
 > ### 📋 [**The remediation plan →**](REMEDIATION.md)
 
-As of **12 August 2026, twenty-one of the twenty-two are closed.** The one that
-is not is **C3, the offline queue** — a dead zone still loses driver actions
-until they reconnect, and the app does not yet queue them. It is deliberately
-last: the plan sequences it "once the safety work is not waiting on it", which is
-now true, and a half-built sync layer that drops or reorders writes would be
-worse than none in an app about where children are.
+As of **26 August 2026, all twenty-two are closed.** The last was **C3, the
+offline queue**, deliberately sequenced last — the plan puts it "once the safety
+work is not waiting on it", and a half-built sync layer that drops or reorders
+writes would be worse than none in an app about where children are.
 
-The remediation document carries a full checklist at the bottom.
+The remediation document carries a full checklist at the bottom, including the
+four driver actions that are deliberately *not* queued and why.
 
 ---
 

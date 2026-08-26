@@ -11,8 +11,9 @@ Two things to know before reading:
   being firewalled from boarding, and empty-stop skipping. Those are not in this
   plan because they are not problems.
 - **Four items were already closed** by the 10 August session. The 12 August
-  session closed **everything else except C3**. There is a full checklist at the
-  bottom of this document; the per-item sections below are kept for the reasoning.
+  session closed everything else except C3, and **C3 closed on 26 August 2026**.
+  All twenty-two are now done. There is a full checklist at the bottom of this
+  document; the per-item sections below are kept for the reasoning.
 
 Severity is about what happens if it is wrong, not how long it takes to fix.
 **Safety** marks a path where a child can be unaccounted for and nobody is told.
@@ -150,7 +151,7 @@ away → boarded transition is in the table from the start.
 
 ## Phase 3 — connectivity
 
-### C3 — No offline queue  · Safety · **STILL OPEN — the only one**
+### ~~C3 — No offline queue~~ · Safety · Closed 26 Aug
 
 Every driver action is a direct PostgREST write; a failure surfaces as a red
 string under a card. No retry, no queue, no local write-ahead log — `expo-sqlite`
@@ -177,6 +178,38 @@ refresh; a driver cannot re-drive the route.
 **Effort:** 2–3 days, and the only item here that is genuinely a project.
 **Risk:** medium — ordering and idempotency need care. Every write is already
 keyed by row id, which helps.
+
+**As built.** `src/lib/outbox.ts`, with an `outbox.web.ts` sibling that writes
+straight through — nobody drives a route from a browser, and referencing
+expo-sqlite in the web bundle kills the build.
+
+Four departures from the plan above, all of them narrowings:
+
+- **It is a write-ahead log, not a queue.** Every mutation is written to SQLite
+  *before* it is attempted rather than after it fails. "The app was killed
+  mid-request" is then a recoverable state instead of a lost boarding.
+- **An optimistic overlay was necessary and the plan did not mention it.**
+  `withPending()` lays the unsent writes back over what the server last said.
+  Without it a driver taps Boarded in a dead zone, watches the card not change,
+  and taps again — and every extra tap is another queue entry. The overlay is
+  what stops the offline path generating duplicate work, so it is not a nicety.
+- **A network failure stops the drain rather than skipping the entry.** Ordering
+  is the whole contract: replaying "boarded Priya" after "departed Oak Road"
+  would hit `guard_stop_departure()` with a different roster than the driver saw.
+- **Four actions are deliberately NOT queued**, and the screen says so rather
+  than pretending: undo (the server measures its window against `now()`, so a
+  queued undo is refused by definition), the rider lookup (a question, worthless
+  ten minutes late), `board_at_other_stop` (server-validated), and `report_delay`
+  (cumulative — a replay double-counts and re-times every family).
+
+Idempotency is by construction, not bookkeeping: rider writes are UPDATEs keyed
+by row id, `guard_stop_departure()` already refuses to let a driver overwrite a
+recorded time, and inserts carry a client-generated id through an
+ignore-duplicates upsert so a half-finished flush cannot file two incidents.
+
+The server half is `supabase/patches/2026-08-26b-c3-offline-queue.sql`, and it is
+the half that decides whether the queue produces a true record or a
+plausible-looking lie — see the note below.
 
 ---
 
@@ -273,14 +306,14 @@ the moment the answer changes.
 3. ~~**C2** — the watchdog. Everything after this fails loudly instead of silently.~~ *Done 12 Aug.*
 4. ~~**C5**, then **C8** — correction paths, then lock the transition table around them.~~ *Done 12 Aug.*
 5. ~~**C6 + S1 + S7** — one pass over the notification path.~~ *Done 12 Aug.*
-6. **C3** — the offline queue, once the safety work is not waiting on it. **← the only one left.**
+6. ~~**C3** — the offline queue, once the safety work is not waiting on it.~~ *Done 26 Aug.*
 7. ~~**S2, S4, S5, S8**, then **C7** manual mode.~~ *Done 12 Aug.*
 8. ~~**N1–N5** as capacity allows. **N4** after **S4**.~~ *Done 12 Aug, N4 after S4 as instructed.*
 
 ## Checklist — everything this plan asked for
 
-As of **12 August 2026**. Twenty-one of the twenty-two are done; **C3 is the one
-that is not**, and it is deliberately last for the reason the plan itself gives.
+As of **26 August 2026**. **All twenty-two are done.** C3 was deliberately last,
+for the reason the plan itself gives.
 
 **Phase 1 — the silent failures**
 
@@ -295,7 +328,7 @@ that is not**, and it is deliberately last for the reason the plan itself gives.
 
 **Phase 3 — connectivity**
 
-- [ ] **C3** No offline queue · *Safety* — **not done.** The only item here that is genuinely a project (2–3 days), and the only one whose risk is *shipping it badly*: a half-built sync layer that drops or reorders writes is worse than no sync layer at all in an app about where children are. Everything else is now in place, so it is no longer blocking any safety work. See the note below.
+- [x] **C3** No offline queue · *Safety* — a SQLite **write-ahead log** on the driver's phone (`src/lib/outbox.ts`), drained in insertion order, stopping at the first network failure rather than skipping ahead. Unsent writes are laid back over the screen so a dead zone does not make a driver re-tap everything. Undo, the rider lookup, `board_at_other_stop` and `report_delay` are deliberately not queued and say so. Server half in `2026-08-26b-c3-offline-queue.sql`: a queued boarding is logged and announced at **board time**, not flush time, and the lateness is stated rather than smoothed away.
 
 **Phase 4 — telling people things**
 
@@ -341,25 +374,44 @@ database that had already applied the earlier ones. `supabase/patches/verify.sql
 checks a live database has all 29 objects, including that two functions are the
 *fixed* versions rather than merely present.
 
-### On C3
+### On C3 — closed 26 August 2026
 
-The plan's own sequencing puts the offline queue last, "once the safety work is
-not waiting on it". That is now true: every other item is closed, and the
-watchdog means a driver who goes silent in a dead zone is *noticed* even with no
-queue at all — which was the part that actually mattered.
+The plan's own sequencing put the offline queue last, "once the safety work is
+not waiting on it", and that stayed true right up to the end: the watchdog means
+a driver who goes silent in a dead zone is *noticed* even with no queue at all,
+which was the part that actually mattered.
 
-What is left is the work itself, and it is not the kind to rush: an outbox needs
-ordering, idempotency and conflict rules that are correct on the first day,
-because the failure mode is a boarding record that arrives in the wrong order or
-not at all. The plan budgets 2–3 days and calls the risk *medium*. It should get
-that, not an afternoon.
+**The half that is easy to get wrong is the server half.** An outbox that
+faithfully replays a boarding and then lets the database stamp it `now()` has not
+solved the problem — it has made it harder to see. Before
+`2026-08-26b-c3-offline-queue.sql`, a boarding at 07:42 flushed at 07:55 told the
+mother "Confirmed by the driver at 7:55 AM" and wrote 07:55 into `audit_logs`,
+which is the file a dispute about a child gets settled from. Both wrong, and
+wrong in a way no test of the queue itself would catch.
 
-That dependency is now answered: coverage is good, with **two known dead spots**.
-So C3 is a safeguard rather than the backbone — but a bounded one. The outbox has
-to survive two stops' worth of actions, and the watchdog thresholds have to
-exceed the longest dead-spot crossing or the office gets a false alarm on every
-run through them. **Nobody has timed those two spots yet**, and that number is
-the input to both.
+`rider_event_time()` is now the single definition of when something happened,
+used by the audit log and the notification alike so the two cannot disagree. It
+does **not** simply trust `updated_at`: on an UPDATE that does not name the
+column in its SET list, `new.updated_at` holds the *previous* write's value, and
+the student check-in path is exactly that.
+
+The second decision matters as much as the first: **when the two times differ,
+the message says so.** A parent reading "boarded at 7:42" on a phone that buzzed
+at 7:55 has been handed a thirteen-minute gap with no explanation, and the
+explanation is reassuring — the van had no signal, not nobody noticed. Suppressing
+it would have traded one wrong impression for another.
+
+**Two things still outstanding, neither blocking:**
+
+- **Nobody has timed the two dead spots.** That number is the input to the
+  watchdog thresholds, which must exceed the longest crossing or the office gets
+  a false alarm on every run through them. The queue is now sized for "two stops'
+  worth" by construction — it is bounded only by the phone's disk — so this is no
+  longer an input to C3 itself, but it is still an input to C2.
+- **The 46-assertion flow test covers C3 and self-scan but has not been run
+  against a live Postgres in this session** — no local credentials. `psql bustest
+  -f supabase/patches/flow-test.sql` on a scratch database is the check, and it
+  should be run before the demo.
 
 ## Answered — 12 August 2026
 
@@ -369,7 +421,7 @@ These were the questions no amount of code could decide. Six are now settled.
 | --- | --- | --- |
 | **Guardian present at afternoon drop-off?** | **No — one tap is right.** | No change. `dropped_off` stays a single tap and the batch "All N dropped off safely" keeps working. No authorised-collector list, no two-party confirmation. |
 | **What ages?** | **High schoolers, plus one or two middle schoolers.** | No age column needed. Everyone is old enough to walk home, so the single-tap drop-off above is consistent with the ages, and no-show urgency stays uniform. Revisit only if primary-age children are ever carried. |
-| **Cell coverage?** | **Good. Two known dead spots; most stops have data.** | C3 stays a **safeguard**, not the backbone — which confirms leaving it last was right. But it is now scoped: the outbox must survive *two* stops' worth of actions, not one, and the watchdog thresholds must exceed the longest dead-spot crossing or the office gets a false alarm on every run through them. **Worth timing those two spots before C3 is designed.** |
+| **Cell coverage?** | **Good. Two known dead spots; most stops have data.** | C3 stays a **safeguard**, not the backbone — which confirms leaving it last was right. *Built 26 Aug:* the outbox is bounded only by the phone's disk, so "two stops' worth" is not a design constraint after all. The watchdog thresholds still must exceed the longest dead-spot crossing or the office gets a false alarm on every run through them, and **nobody has timed those two spots yet.** |
 | **Three vans — business or first customer?** | **This is the business.** | Single-tenant is correct. No `companyId`, and the schema's SCOPE NOTE can stop reading like a warning. This is a saved cost, not debt. |
 | **Coordinator watching a screen during the run?** | **No — nobody watches live.** | The most consequential answer here. The exception queue is pull-based, so it is *not a delivery mechanism*. **C2, the watchdog, is now the only safety net that exists** — everything depends on alerts reaching a phone. This is what drove the 12 August push work: real OS notifications, per-channel routing, delivery recorded per message, urgent kinds requiring acknowledgement, and unacknowledged ones escalating back to the office. |
 | **Company phones or personal?** | **Personal.** | Nothing about the device can be mandated — not charging, not battery optimisation, not "Always" background location. So the app must degrade *honestly* rather than assume: `PushStatus` now tells a driver or family when notifications are off and why, instead of failing silently. Battery being a safety dependency is now a stated risk rather than an unexamined one. |
