@@ -118,6 +118,11 @@ create table organization (
 
   -- Blueprint §4.1: check-in is only allowed within a window before the trip.
   checkin_window_min int not null default 60,
+  -- ...and how long AFTER it they may still do so. This was hardcoded as
+  -- `interval '30 min'` inside within_checkin_window(), which made a late van --
+  -- exactly when a student is still at the hub wanting to say so -- the case it
+  -- silently refused.
+  checkin_grace_min int not null default 30 check (checkin_grace_min >= 0),
 
   -- How riders are marked on board.
   --   'manual' — the driver taps each student by name. The default.
@@ -799,7 +804,8 @@ language sql stable security definer set search_path = public as $$
         rs.planned_arrival is null
         or now() between local_ts(t.date, rs.planned_arrival)
                          - make_interval(mins => o.checkin_window_min)
-                     and local_ts(t.date, rs.planned_arrival) + interval '30 min'
+                     and local_ts(t.date, rs.planned_arrival)
+                         + make_interval(mins => o.checkin_grace_min)
       )
   );
 $$;
