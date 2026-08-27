@@ -21,7 +21,7 @@
 
 run = "npm run replit"
 entrypoint = "app/_layout.tsx"
-modules = ["nodejs-20"]
+modules = ["nodejs-20", "python-3.11"]
 
 hidden = [".expo", "node_modules", "dist", ".git"]
 
@@ -75,3 +75,6 @@ pattern = "**/*.{ts,tsx}"
 
 [languages.typescript.languageServer]
 start = "typescript-language-server --stdio"
+
+[agent]
+expertMode = true
