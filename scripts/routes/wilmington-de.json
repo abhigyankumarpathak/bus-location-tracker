@@ -1,0 +1,27 @@
+[
+  {
+    "name": "Weis Markets",
+    "address": "Weis Markets, Middletown, DE",
+    "lat": 39.50506,
+    "lng": -75.68178,
+    "dwell": 25,
+    "_source": "39°30'18.2\"N 75°40'54.4\"W, supplied by hand. OpenStreetMap has no Weis Markets in New Castle County, so deleting these coordinates will NOT cause a lookup to replace them — it will stop the run."
+  },
+  { "lat": 39.5335, "lng": -75.7134 },
+  {
+    "name": "Brennan Estates",
+    "address": "Brennan Estates, Bear, DE",
+    "lat": 39.56194,
+    "lng": -75.74503,
+    "dwell": 30,
+    "_source": "39°33'43.0\"N 75°44'42.1\"W, supplied by hand. Not in OpenStreetMap either."
+  },
+  { "lat": 39.6579, "lng": -75.6666 },
+  {
+    "name": "Charter School of Wilmington",
+    "address": "Charter School of Wilmington, 100 N DuPont Rd, Wilmington, DE 19807",
+    "lat": 39.75386,
+    "lng": -75.58808,
+    "_source": "39°45'13.9\"N 75°35'17.1\"W, supplied by hand. Nominatim independently returned 39.75389, -75.58701 for this address — about 90 m apart, so both are the right building."
+  }
+]

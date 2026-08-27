@@ -47,7 +47,8 @@
     "web": "expo start --web",
     "replit": "node scripts/replit-preflight.mjs && expo export --platform web && serve dist --listen 5000 --single",
     "replit:dev": "node scripts/replit-preflight.mjs && BROWSER=none expo start --web --host lan --max-workers 2",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "simulate": "node scripts/simulate.mjs"
   },
   "private": true
 }
