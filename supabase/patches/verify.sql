@@ -77,7 +77,12 @@ with expected(kind, name, label) as (values
   -- an error the app swallows, which is why it looked like an empty day rather
   -- than a fault. See drift.sql for the general form of this problem.
   ('column', 'change_requests.end_date',             'SPAN · multi-day requests'),
-  ('body',   'apply_change_request|end_date',        'SPAN · applied across every day it covers')
+  ('body',   'apply_change_request|end_date',        'SPAN · applied across every day it covers'),
+  -- The other never-patched column (7c). Nothing reads it since the self-scan
+  -- flip, which is why it never raised -- schema.sql keeps it deliberately
+  -- until the new model has survived a term.
+  ('column', 'student_trip_status.boarding_code',    'SPAN · old per-rider scan token'),
+  ('func',   'new_boarding_code',                    'SPAN · what generates it')
 )
 select
   case when found then '✅ OK  ' else '❌ MISSING' end as status,

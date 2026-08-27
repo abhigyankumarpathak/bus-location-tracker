@@ -347,7 +347,11 @@ live data and idempotent. Run them in filename order:
    The SQL editor runs a script in one transaction, so 8 cannot land until this
    has: its closing `ensure_daily_trips()` call would fail and take the whole
    patch back out with it.
-8. `2026-08-27-local-date.sql` — the day itself. Patch 4 fixed every planned
+8. `2026-08-27c-boarding-code.sql` — `student_trip_status.boarding_code` and
+   `new_boarding_code()`, the other pair that reached schema.sql without a patch.
+   Nothing reads them since the self-scan flip, which is why they never raised an
+   error the way `end_date` did — `drift.sql` is what found them.
+9. `2026-08-27-local-date.sql` — the day itself. Patch 4 fixed every planned
    *time*; this fixes every *date*. Without it `current_date` is the database's
    date, so a New York operation rolls over to tomorrow at 8pm and every trip
    vanishes from every screen until local midnight.
