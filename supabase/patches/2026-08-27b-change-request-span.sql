@@ -100,17 +100,19 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
--- Now generate the day. This is the call that has been failing silently.
--- Expect a number back: the trips it created.
+-- Now generate the day. This is the call that has been failing silently, so a
+-- number coming back is the whole point of this patch.
 --
--- Run 2026-08-27-local-date.sql BEFORE this if you have not already, so the day
--- it generates is the operation's day and not UTC's. If today_local() does not
--- exist yet, use ensure_daily_trips(current_date) for this one call.
+-- current_date rather than today_local() deliberately: this patch has to run
+-- BEFORE 2026-08-27-local-date.sql (which cannot get past its own final call
+-- until the column above exists), so it cannot assume today_local() is there
+-- yet. Run the date patch straight after this one and the day becomes the
+-- operation's day rather than UTC's.
 -- ---------------------------------------------------------------------------
-select ensure_daily_trips(today_local()) as trips_created;
+select ensure_daily_trips(current_date) as trips_created;
 
-select date, status, driver_id is not null as has_driver,
+select t.date, t.status, t.driver_id is not null as has_driver,
        (select count(*) from student_trip_status s where s.trip_id = t.id) as riders
 from daily_trips t
-where t.date >= today_local() - 1
+where t.date >= current_date - 1
 order by t.date desc;

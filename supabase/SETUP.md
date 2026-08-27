@@ -337,17 +337,20 @@ live data and idempotent. Run them in filename order:
    `notify_on_rider_status()`, and only 6's version records a queued boarding at
    the time it happened rather than the time it synced. Running 5 after 6 quietly
    reverts that, which verify.sql catches as *"C3 · notifications use it"*.
-7. `2026-08-27-local-date.sql` — the day itself. Patch 4 fixed every planned
+7. `2026-08-27b-change-request-span.sql` — **the one that unblocks trip
+   generation, and it goes before 8.** `change_requests.end_date` reached
+   schema.sql and every function that reads it, but no patch ever added the
+   column. Patch 2's `ensure_daily_trips()` joins on it, so on a patched-forward
+   database every call raised `column c.end_date does not exist` — into an error
+   the app deliberately swallows. The symptom is "No trips today" on the
+   dashboard and "No trips assigned to you today" for every driver, indefinitely.
+   The SQL editor runs a script in one transaction, so 8 cannot land until this
+   has: its closing `ensure_daily_trips()` call would fail and take the whole
+   patch back out with it.
+8. `2026-08-27-local-date.sql` — the day itself. Patch 4 fixed every planned
    *time*; this fixes every *date*. Without it `current_date` is the database's
    date, so a New York operation rolls over to tomorrow at 8pm and every trip
    vanishes from every screen until local midnight.
-8. `2026-08-27b-change-request-span.sql` — **the one that unblocks trip
-   generation.** `change_requests.end_date` reached schema.sql and every function
-   that reads it, but no patch ever added the column. Patch 2's
-   `ensure_daily_trips()` joins on it, so on a patched-forward database every
-   call raised `column c.end_date does not exist` — into an error the app
-   deliberately swallows. The symptom is "No trips today" on the dashboard and
-   "No trips assigned to you today" for every driver, indefinitely.
 
 Then paste **`supabase/patches/drift.sql`** into the SQL editor. It compares
 every table and column in `schema.sql` against the live database and is the check
