@@ -1,27 +1,24 @@
 [
   {
     "name": "Weis Markets",
-    "address": "Weis Markets, Middletown, DE",
     "lat": 39.50506,
     "lng": -75.68178,
     "dwell": 25,
-    "_source": "39°30'18.2\"N 75°40'54.4\"W, supplied by hand. OpenStreetMap has no Weis Markets in New Castle County, so deleting these coordinates will NOT cause a lookup to replace them — it will stop the run."
+    "_source": "Matches the DEMO route's stop 1 exactly. These come from the database, not a geocoder -- OpenStreetMap has no Weis Markets in New Castle County, so deleting the coordinates will stop the run rather than trigger a lookup."
   },
   { "lat": 39.5335, "lng": -75.7134 },
   {
     "name": "Brennan Estates",
-    "address": "Brennan Estates, Bear, DE",
     "lat": 39.56194,
     "lng": -75.74503,
     "dwell": 30,
-    "_source": "39°33'43.0\"N 75°44'42.1\"W, supplied by hand. Not in OpenStreetMap either."
+    "_source": "Matches the DEMO route's stop 2 exactly. Not in OpenStreetMap either."
   },
-  { "lat": 39.6579, "lng": -75.6666 },
+  { "lat": 39.658, "lng": -75.6658 },
   {
     "name": "Charter School of Wilmington",
-    "address": "Charter School of Wilmington, 100 N DuPont Rd, Wilmington, DE 19807",
-    "lat": 39.75386,
-    "lng": -75.58808,
-    "_source": "39°45'13.9\"N 75°35'17.1\"W, supplied by hand. Nominatim independently returned 39.75389, -75.58701 for this address — about 90 m apart, so both are the right building."
+    "lat": 39.75408,
+    "lng": -75.58656,
+    "_source": "Matches the DEMO route's stop 3 exactly. Taken from the database rather than the geocoder: Nominatim returns a point 132 m away, and the one the office actually pinned is the one the ETA has to count down to."
   }
 ]
