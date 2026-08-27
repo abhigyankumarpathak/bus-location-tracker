@@ -6,7 +6,8 @@
     "scheme": "bustracker",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0B1220",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.thecoder12321.bus-tracking-app",
@@ -47,7 +48,7 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Bus Tracker uses the camera to scan student check-in QR codes.",
+          "cameraPermission": "Bus Tracker uses the camera to scan the boarding code in your van.",
           "recordAudioAndroid": false
         }
       ],
