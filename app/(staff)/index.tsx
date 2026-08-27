@@ -6,10 +6,10 @@ import { supabase } from '../../src/lib/supabase';
 import {
   ensureTodaysTrips,
   sweepIfDue,
-  today,
   useReference,
   useTripStatuses,
 } from '../../src/lib/hooks';
+import { useToday } from '../../src/lib/org';
 import {
   RIDER_STATUS_LABEL,
   RIDER_STATUS_TONE,
@@ -38,6 +38,7 @@ import {
  */
 export default function StaffDashboard() {
   const { profile, isAdmin, signOut, lockStaff } = useAuth();
+  const operatingDay = useToday();
   const ref = useReference();
   const { rows, trips, loading, reload } = useTripStatuses();
 
@@ -173,7 +174,7 @@ export default function StaffDashboard() {
 
   return (
     <Screen>
-      <Title sub={`${today()} · ${profile?.role}`}>Dashboard</Title>
+      <Title sub={`${operatingDay} · ${profile?.role}`}>Dashboard</Title>
 
       <Row style={styles.cards}>
         <Stat label="Active trips" value={activeTrips} tone={theme.accent} />

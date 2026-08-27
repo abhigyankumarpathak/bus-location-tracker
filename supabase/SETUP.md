@@ -331,6 +331,30 @@ live data and idempotent. Run them in filename order:
    the operation's timezone to `America/New_York`; change that if your vans run
    somewhere else. Without it every planned time is compared against the
    database's clock, which on Supabase is UTC.
+5. `2026-08-26-self-scan.sql` — the students scan the van, not the reverse.
+6. `2026-08-26b-c3-offline-queue.sql` — the server half of the driver's offline
+   queue. **Order matters here:** 5 and 6 both redefine
+   `notify_on_rider_status()`, and only 6's version records a queued boarding at
+   the time it happened rather than the time it synced. Running 5 after 6 quietly
+   reverts that, which verify.sql catches as *"C3 · notifications use it"*.
+7. `2026-08-27-local-date.sql` — the day itself. Patch 4 fixed every planned
+   *time*; this fixes every *date*. Without it `current_date` is the database's
+   date, so a New York operation rolls over to tomorrow at 8pm and every trip
+   vanishes from every screen until local midnight.
+8. `2026-08-27b-change-request-span.sql` — **the one that unblocks trip
+   generation.** `change_requests.end_date` reached schema.sql and every function
+   that reads it, but no patch ever added the column. Patch 2's
+   `ensure_daily_trips()` joins on it, so on a patched-forward database every
+   call raised `column c.end_date does not exist` — into an error the app
+   deliberately swallows. The symptom is "No trips today" on the dashboard and
+   "No trips assigned to you today" for every driver, indefinitely.
+
+Then paste **`supabase/patches/drift.sql`** into the SQL editor. It compares
+every table and column in `schema.sql` against the live database and is the check
+that would have caught the `end_date` hole years earlier: plpgsql does not
+resolve column names until a statement runs, so a function referencing a column
+nobody created is created happily and fails quietly at 6am. Regenerate it when
+the schema changes.
 
 Then paste **`supabase/patches/verify.sql`** into the SQL editor. It checks every
 table, column, function and trigger the patches create — plus that the C4 guard

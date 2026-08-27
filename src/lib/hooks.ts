@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { supabase } from './supabase';
 import { useOutbox, withPending } from './outbox';
+import { useToday } from './org';
 import type {
   AppNotification,
   DailyTrip,
@@ -14,8 +15,6 @@ import type {
   Vehicle,
   VehicleLocation,
 } from './types';
-
-export const today = () => new Date().toISOString().slice(0, 10);
 
 /**
  * The reference data every screen needs to turn ids into names: hubs, schools,
@@ -129,7 +128,12 @@ export function useReference() {
  * their linked children's, a driver sees the riders on their trips, staff see
  * everything. So the same query serves every screen.
  */
-export function useTripStatuses(date: string = today()) {
+export function useTripStatuses(explicitDate?: string) {
+  // The operation's day, not UTC's and not the device's. Everything below keys
+  // off it, so a screen left open across local midnight follows the rollover.
+  const operatingDay = useToday();
+  const date = explicitDate ?? operatingDay;
+
   const [rows, setRows] = useState<StudentTripStatus[]>([]);
   const [trips, setTrips] = useState<DailyTrip[]>([]);
   const [progress, setProgress] = useState<TripStopProgress[]>([]);

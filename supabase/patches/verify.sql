@@ -57,7 +57,27 @@ with expected(kind, name, label) as (values
   ('func',   'rider_event_time',            'C3 · when it happened, not when we heard'),
   ('body',   'log_rider_status|rider_event_time',     'C3 · audit log uses it'),
   ('body',   'notify_on_rider_status|rider_event_time','C3 · notifications use it'),
-  ('body',   'notify_on_stop_departure|late_txt',     'C3 · late alerts say why')
+  ('body',   'notify_on_stop_departure|late_txt',     'C3 · late alerts say why'),
+  -- The date itself (patch 7). current_date is the DATABASE's date, so on a
+  -- UTC project every "today" rolled over hours early and the day's trips
+  -- disappeared from every screen. Existence of today_local() proves nothing on
+  -- its own -- what matters is that the callers actually use it, policies too.
+  ('func',   'today_local',                          'DATE · the operation''s day'),
+  ('body',   'ensure_daily_trips|today_local',       'DATE · trips generated on the local day'),
+  ('body',   'transport_watchdog|today_local',       'DATE · watchdog reads the local day'),
+  ('body',   'send_arrival_alerts|today_local',      'DATE · arrival alerts read the local day'),
+  ('body',   'board_by_vehicle_code|today_local',    'DATE · self-scan reads the local day'),
+  ('body',   'decide_change_request|today_local',    'DATE · cutoff judged on the local day'),
+  ('policy', 'profiles|riders read their driver|today_local',
+                                                     'DATE · driver-name policy, local day'),
+  ('policy', 'vehicle_locations|read locations|today_local',
+                                                     'DATE · van-position policy, local day'),
+  -- The column no patch ever added (patch 7b). ensure_daily_trips() has read it
+  -- since patch 2, so without it trip generation raised on every call -- into
+  -- an error the app swallows, which is why it looked like an empty day rather
+  -- than a fault. See drift.sql for the general form of this problem.
+  ('column', 'change_requests.end_date',             'SPAN · multi-day requests'),
+  ('body',   'apply_change_request|end_date',        'SPAN · applied across every day it covers')
 )
 select
   case when found then '✅ OK  ' else '❌ MISSING' end as status,
@@ -78,6 +98,15 @@ from (
         where n.nspname = 'public' and p.proname = e.name)
       when 'trigger' then exists (
         select 1 from pg_trigger where tgname = e.name and not tgisinternal)
+      -- table|policy|needle. A policy's predicate is not a function body, so
+      -- the 'body' check above cannot see it -- and an RLS policy left on the
+      -- wrong date is invisible until a parent cannot see their van.
+      when 'policy' then exists (
+        select 1 from pg_policies
+        where schemaname = 'public'
+          and tablename  = split_part(e.name, '|', 1)
+          and policyname = split_part(e.name, '|', 2)
+          and coalesce(qual, '') like '%' || split_part(e.name, '|', 3) || '%')
       when 'body' then exists (
         select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
         where n.nspname = 'public'

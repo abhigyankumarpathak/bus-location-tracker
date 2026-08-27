@@ -173,6 +173,51 @@ create table organization (
 insert into organization (id) values (1);
 
 -- ---------------------------------------------------------------------------
+-- The clock the operation runs on
+--
+-- Defined up here, ahead of the tables, because `daily_trips.date` defaults to
+-- today_local() and a column default cannot call a function that does not exist
+-- yet.
+--
+-- Every wall-clock comparison in this schema goes through local_ts(). Before it
+-- existed they each did `(date + time)::timestamptz`, which resolves in the
+-- DATABASE's timezone — UTC on Supabase — so a New York operation was four hours
+-- out on the watchdog, the arrival alerts, the change cutoff and the check-in
+-- window simultaneously.
+--
+-- today_local() is that same bug one level up, and it went unnoticed for longer
+-- because it only bites in the evening. `current_date` is the DATABASE's date,
+-- so on a UTC project a New York operation rolled over to tomorrow at 8pm —
+-- while a van was still finishing its afternoon run. Every trip on every screen
+-- vanished at once, because every screen asks for "today" and today had become
+-- a date with no trips generated against it yet.
+--
+-- So: no bare current_date anywhere in this schema. The operation's day is the
+-- only day this app has.
+-- ---------------------------------------------------------------------------
+create or replace function org_tz() returns text
+language sql stable security definer set search_path = public as $$
+  select coalesce(nullif(btrim(time_zone), ''), 'UTC') from organization where id = 1;
+$$;
+
+create or replace function local_ts(on_date date, at_time time) returns timestamptz
+language sql stable security definer set search_path = public as $$
+  select (on_date + at_time) at time zone org_tz();
+$$;
+
+/**
+ * Today, where the vans are.
+ *
+ * Stable, so it is evaluated once per statement rather than per row — a sweep
+ * that straddles local midnight stays internally consistent instead of
+ * comparing half its rows against one date and half against the next.
+ */
+create or replace function today_local() returns date
+language sql stable security definer set search_path = public as $$
+  select (now() at time zone org_tz())::date;
+$$;
+
+-- ---------------------------------------------------------------------------
 -- People
 -- ---------------------------------------------------------------------------
 
@@ -343,7 +388,7 @@ create table route_assignments (
 create table daily_trips (
   id            uuid primary key default gen_random_uuid(),
   route_id      uuid not null references route_templates on delete cascade,
-  date          date not null default current_date,
+  date          date not null default today_local(),
   driver_id     uuid references profiles on delete set null,
   vehicle_id    uuid references vehicles on delete set null,
   status        trip_status not null default 'scheduled',
@@ -659,25 +704,6 @@ create index account_removals_email_idx on account_removals (lower(email));
 -- recursing into the profiles policies)
 -- ---------------------------------------------------------------------------
 
-/**
- * The timezone the vans run in, and a planned time resolved into it.
- *
- * Every wall-clock comparison in this schema goes through local_ts(). Before it
- * existed they each did `(date + time)::timestamptz`, which resolves in the
- * DATABASE's timezone — UTC on Supabase — so a New York operation was four hours
- * out on the watchdog, the arrival alerts, the change cutoff and the check-in
- * window simultaneously.
- */
-create or replace function org_tz() returns text
-language sql stable security definer set search_path = public as $$
-  select coalesce(nullif(btrim(time_zone), ''), 'UTC') from organization where id = 1;
-$$;
-
-create or replace function local_ts(on_date date, at_time time) returns timestamptz
-language sql stable security definer set search_path = public as $$
-  select (on_date + at_time) at time zone org_tz();
-$$;
-
 create or replace function my_role() returns user_role
 language sql stable security definer set search_path = public as $$
   select role from profiles where id = auth.uid() and status = 'active';
@@ -768,7 +794,7 @@ language sql stable security definer set search_path = public as $$
     cross join organization o
     where t.id = target_trip
       and o.id = 1
-      and t.date = current_date
+      and t.date = today_local()
       and (
         rs.planned_arrival is null
         or now() between local_ts(t.date, rs.planned_arrival)
@@ -793,7 +819,7 @@ language sql stable security definer set search_path = public as $$
     join daily_trips t on t.id = sts.trip_id
     where sts.student_id = target
       and t.driver_id = auth.uid()
-      and t.date = current_date
+      and t.date = today_local()
   );
 $$;
 
@@ -1028,7 +1054,7 @@ create trigger on_profile_privileged_update before update on profiles
 -- that weekday, then seats every assigned student — minus anyone with an
 -- approved absence or parent-pickup for that date, and (for club routes) anyone
 -- who has not been approved as attending.
-create or replace function ensure_daily_trips(target_date date default current_date)
+create or replace function ensure_daily_trips(target_date date default today_local())
 returns int
 language plpgsql security definer set search_path = public as $$
 declare
@@ -1132,7 +1158,7 @@ begin
   if not is_active() then
     raise exception 'Your account is not active.';
   end if;
-  return ensure_daily_trips(current_date);
+  return ensure_daily_trips(today_local());
 end;
 $$;
 
@@ -1180,7 +1206,7 @@ begin
       -- The van is out. Only a coordinator can change anything now, because the
       -- driver is already working from the roster as it stands.
       new.approval := 'pending';
-    elsif now() <= cutoff or new.date > current_date then
+    elsif now() <= cutoff or new.date > today_local() then
       new.approval := 'auto_approved';
       new.reviewed_at := now();
     else
@@ -1812,17 +1838,17 @@ begin
       select sts.student_id as id from student_trip_status sts
       join daily_trips t on t.id = sts.trip_id
       where new.student_id is null and new.route_id is not null
-        and t.route_id = new.route_id and t.date >= current_date
+        and t.route_id = new.route_id and t.date >= today_local()
       union
       select gl.parent_id from student_trip_status sts
       join daily_trips t on t.id = sts.trip_id
       join guardian_links gl on gl.student_id = sts.student_id and gl.status = 'accepted'
       where new.student_id is null and new.route_id is not null
-        and t.route_id = new.route_id and t.date >= current_date
+        and t.route_id = new.route_id and t.date >= today_local()
       union
       select t.driver_id from daily_trips t
       where new.student_id is null and new.route_id is not null
-        and t.route_id = new.route_id and t.date >= current_date
+        and t.route_id = new.route_id and t.date >= today_local()
     ) x
     join profiles p on p.id = x.id and p.status = 'active'
 
@@ -2339,7 +2365,7 @@ begin
   ) fs on true
   left join hubs    h on h.id = fs.hub_id
   left join schools s on s.id = fs.school_id
-  where t.date = current_date
+  where t.date = today_local()
     and t.status = 'scheduled'
     and fs.planned_departure is not null
     and now() > local_ts(t.date, fs.planned_departure)
@@ -2368,7 +2394,7 @@ begin
   left join hubs    h on h.id = rs.hub_id
   left join schools s on s.id = rs.school_id
   left join trip_stop_progress p on p.trip_id = t.id and p.stop_id = rs.id
-  where t.date = current_date
+  where t.date = today_local()
     and t.status = 'active'
     and rs.planned_arrival is not null
     and p.arrived_at is null
@@ -2409,7 +2435,7 @@ begin
   left join route_stops rs on rs.id = sts.pickup_stop_id
   left join hubs    h on h.id = rs.hub_id
   left join schools s on s.id = rs.school_id
-  where t.date = current_date
+  where t.date = today_local()
     and sts.status = 'waiting'
     and sts.check_in_time is not null
     and now() - sts.check_in_time > make_interval(mins => cfg.watchdog_waiting_min)
@@ -2430,7 +2456,7 @@ begin
            || ' student(s) are still recorded as on board.'
   from daily_trips t
   join route_templates rt on rt.id = t.route_id
-  where t.date = current_date
+  where t.date = today_local()
     and t.status = 'active'
     and t.started_at is not null
     and now() - t.started_at > make_interval(mins => cfg.watchdog_trip_max_min)
@@ -2459,7 +2485,7 @@ begin
     order by rs.seq desc
     limit 1
   ) fin on true
-  where t.date = current_date
+  where t.date = today_local()
     and sts.status in ('boarded', 'in_transit')
     and fin.at_time is not null
     and now() - fin.at_time > make_interval(mins => cfg.watchdog_onboard_min)
@@ -2685,7 +2711,7 @@ begin
       join route_stops rs on rs.route_id = t.route_id
       left join hubs    h on h.id = rs.hub_id
       left join schools s on s.id = rs.school_id
-      where t.date = current_date
+      where t.date = today_local()
         and t.status in ('scheduled', 'active')
         and rs.planned_arrival is not null
     ),
@@ -2982,7 +3008,7 @@ begin
     rt.type,
     coalesce(nullif(dp.full_name, ''), 'Not assigned'),
     t.date,
-    t.date = current_date
+    t.date = today_local()
   from student_trip_status sts
   join daily_trips t      on t.id = sts.trip_id
   join route_templates rt on rt.id = t.route_id
@@ -3110,7 +3136,7 @@ begin
   select t.* into trip
   from daily_trips t
   where t.vehicle_id = van_id
-    and t.date = current_date
+    and t.date = today_local()
     and t.status = 'active'
   order by t.started_at desc nulls last
   limit 1;
@@ -3136,7 +3162,7 @@ begin
     join route_templates rt  on rt.id = t.route_id
     left join profiles p     on p.id = t.driver_id
     where sts.student_id = me
-      and t.date = current_date
+      and t.date = today_local()
       and t.status in ('scheduled', 'active')
     order by t.started_at nulls last
     limit 1;
@@ -3282,7 +3308,7 @@ begin
   left join route_stops rs on rs.id = sts.pickup_stop_id
   left join hubs    h on h.id = rs.hub_id
   left join schools s on s.id = rs.school_id
-  where t.date = current_date
+  where t.date = today_local()
     and p.full_name ilike '%' || btrim(search) || '%'
   order by (t.driver_id = auth.uid()) desc, p.full_name
   limit 10;
@@ -3444,7 +3470,7 @@ create policy "riders read their driver" on profiles for select using (
     from daily_trips t
     join student_trip_status sts on sts.trip_id = t.id
     where t.driver_id = profiles.id
-      and t.date = current_date
+      and t.date = today_local()
       and (sts.student_id = auth.uid() or is_guardian_of(sts.student_id))
   )
 );
@@ -3671,7 +3697,7 @@ create policy "read locations" on vehicle_locations for select using (
   is_staff() or (is_active() and exists (
     select 1 from daily_trips t
     where t.vehicle_id = vehicle_locations.vehicle_id
-      and t.date = current_date
+      and t.date = today_local()
       and (
         t.driver_id = auth.uid()
         or exists (

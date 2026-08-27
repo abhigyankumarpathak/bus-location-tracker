@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../../src/lib/auth';
-import { useOrg } from '../../src/lib/org';
+import { useOrg, useToday } from '../../src/lib/org';
 import { supabase } from '../../src/lib/supabase';
-import { today, useMyChildren } from '../../src/lib/hooks';
+import { useMyChildren } from '../../src/lib/hooks';
 import { CHANGE_LABEL, formatDateSpan } from '../../src/lib/types';
 import type { ChangeKind, ChangeRequest } from '../../src/lib/types';
 import {
@@ -74,7 +74,12 @@ export default function ParentChange() {
   const { children } = useMyChildren();
 
   const [childId, setChildId] = useState<string | null>(null);
-  const [date, setDate] = useState(today());
+  // Not seeded state: the operating day arrives with the organisation row a
+  // moment after mount, and a frozen initial value would hold the device's
+  // guess. Follows the operation's day until somebody types over it.
+  const operatingDay = useToday();
+  const [pickedDate, setDate] = useState<string | null>(null);
+  const date = pickedDate ?? operatingDay;
   // A holiday is one request, not twenty. Off by default because almost every
   // change really is one day, and an end date nobody wanted is a trap.
   const [multiDay, setMultiDay] = useState(false);

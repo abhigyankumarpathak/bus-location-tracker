@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import type { PropsWithChildren } from 'react';
 import { supabase } from './supabase';
+import { todayIn } from './day';
 import type { Organization } from './types';
 
 /**
@@ -40,6 +41,23 @@ export function useFeatures() {
      */
     undoWindowSec: org?.undo_window_sec ?? 90,
   };
+}
+
+/**
+ * Today, where the vans are — the client's half of today_local() in schema.sql.
+ *
+ * Both read `organization.time_zone`, so the day a screen asks for and the day
+ * the database generates trips against are the same day. Before this they were
+ * both UTC, which meant that from 8pm in New York every screen went looking for
+ * tomorrow and found nothing there.
+ *
+ * Reactive: the organisation row arrives a moment after mount, so this returns
+ * the device's date for a render or two and then settles. Anything keyed on it
+ * re-runs when it does.
+ */
+export function useToday() {
+  const { org } = useOrg();
+  return todayIn(org?.time_zone);
 }
 
 export function OrgProvider({ children }: PropsWithChildren) {

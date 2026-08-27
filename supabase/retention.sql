@@ -115,7 +115,7 @@ create or replace function generate_weekly_reports(p_week_start date default nul
 returns int
 language plpgsql security definer set search_path = public as $$
 declare
-  ws date := coalesce(p_week_start, (date_trunc('week', current_date - interval '7 days'))::date);
+  ws date := coalesce(p_week_start, (date_trunc('week', today_local() - interval '7 days'))::date);
   we date := ws + 6;
   made int := 0;
   is_new boolean;
@@ -239,7 +239,7 @@ declare
   d_audit int := 0;
 begin
   select retention_weeks into keep_weeks from organization where id = 1;
-  cutoff := (date_trunc('week', current_date) - (keep_weeks || ' weeks')::interval)::date;
+  cutoff := (date_trunc('week', today_local()) - (keep_weeks || ' weeks')::interval)::date;
 
   -- Routine rides on unremarkable trips, but only where the week was archived.
   with gone as (

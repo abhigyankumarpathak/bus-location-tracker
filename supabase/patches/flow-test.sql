@@ -101,8 +101,8 @@ insert into route_assignments (route_id, student_id, pickup_stop_id, dropoff_sto
 \echo ''
 \echo '################ 1. THE DAY IS GENERATED ################'
 select as_user('00000000-0000-0000-0000-0000000000c1');
-select ensure_daily_trips(current_date);
-select ok('two trips exist for today', count(*) = 2) from daily_trips where date = current_date;
+select ensure_daily_trips(today_local());
+select ok('two trips exist for today', count(*) = 2) from daily_trips where date = today_local();
 select ok('eight rider rows seeded', count(*) = 8) from student_trip_status;
 
 \echo ''
@@ -111,7 +111,7 @@ select ok('eight rider rows seeded', count(*) = 8) from student_trip_status;
 -- the wall-clock cutoff has long passed.
 select as_user('00000000-0000-0000-0000-0000000000a2');
 insert into change_requests (student_id, date, kind, reason, requested_by)
-values ('00000000-0000-0000-0000-000000000044', current_date, 'absent', 'Ill.',
+values ('00000000-0000-0000-0000-000000000044', today_local(), 'absent', 'Ill.',
         '00000000-0000-0000-0000-0000000000a2');
 select ok('absence auto-approved before the van starts (S4)', approval = 'auto_approved')
 from change_requests where student_id = '00000000-0000-0000-0000-000000000044';
