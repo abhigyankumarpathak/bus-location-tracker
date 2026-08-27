@@ -589,6 +589,15 @@ child about to board the **wrong vehicle** gets caught.
 Marking students on by name still works underneath. A flat phone cannot scan and
 the van still has to leave.
 
+**It works in a browser too**, not just the phone app. `CameraView` drives
+`getUserMedia`, and the decoder uses the browser's native `BarcodeDetector`
+where there is one (Chrome, Edge) and falls back to the `barcode-detector`
+polyfill — ZXing compiled to WASM, already a dependency of `expo-camera` — which
+covers Safari and Firefox. The browser shows its own permission prompt. The one
+hard requirement is a **secure context**: over plain http `getUserMedia` is not
+denied, it is *undefined*, so the app checks for that and says so rather than
+appearing to do nothing.
+
 *Left over from the old direction:* `boarding_code` on `student_trip_status` and
 `identify_boarding_code()` are unused by any screen. Kept rather than dropped
 because removing a column mid-pilot buys nothing; worth deleting once self-scan

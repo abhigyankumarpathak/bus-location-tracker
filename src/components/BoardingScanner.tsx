@@ -6,6 +6,19 @@ import { Button, Card, theme } from './ui';
 /**
  * The QR scanner, for attendance_mode = 'scan'.
  *
+ * RUNS EVERYWHERE, including the browser. There used to be a `.web.tsx` sibling
+ * here telling people to go and get a phone — written when the assumption was
+ * that expo-camera had no web build. It does: `CameraView` drives getUserMedia,
+ * and the barcode decoder uses the browser's native BarcodeDetector where there
+ * is one (Chrome, Edge) and falls back to the `barcode-detector` polyfill, which
+ * is ZXing compiled to WASM and ships as a dependency of expo-camera. That
+ * covers Safari and Firefox, so every browser a student might hold works.
+ *
+ * The camera is gated on a SECURE CONTEXT. Over HTTPS or on localhost the
+ * browser shows its own permission prompt; over plain http getUserMedia is not
+ * merely denied, it is undefined, and asking produces nothing at all. That is
+ * checked for below, because "nothing happened" is the worst possible error.
+ *
  * As of 26 August 2026 this is the STUDENT's camera pointed at the printed card
  * in the van, not the driver's pointed at a phone. The inversion is an operator
  * requirement — minimise what the driver touches — and what it costs is written
@@ -54,6 +67,16 @@ interface Props {
  * just handled, and ignore everything while an await is in flight.
  */
 const REPEAT_LOCKOUT_MS = 3500;
+
+/**
+ * Browsers only expose the camera over HTTPS or on localhost. A LAN address
+ * like http://192.168.1.4:8081 gets no prompt and no error — the API simply is
+ * not there — so this is detected rather than left to look like a broken app.
+ */
+const insecureBrowser =
+  typeof window !== 'undefined' &&
+  typeof window.isSecureContext === 'boolean' &&
+  !window.isSecureContext;
 
 export function BoardingScanner({
   visible,
@@ -129,13 +152,24 @@ export function BoardingScanner({
   return (
     <Modal visible animationType="slide" onRequestClose={onClose} statusBarTranslucent>
       <View style={styles.root}>
-        {!permission?.granted ? (
+        {insecureBrowser ? (
+          <View style={styles.centre}>
+            <Card style={styles.permCard}>
+              <Text style={styles.permTitle}>This page is not on a secure connection</Text>
+              <Text style={styles.permBody}>
+                Browsers only allow camera access over https. Open this site using its https
+                address and the camera will work — or ask the driver to board you by name.
+              </Text>
+              <Button label="Go back" variant="secondary" onPress={onClose} />
+            </Card>
+          </View>
+        ) : !permission?.granted ? (
           <View style={styles.centre}>
             <Card style={styles.permCard}>
               <Text style={styles.permTitle}>The camera is not available yet</Text>
               <Text style={styles.permBody}>
                 {permission?.canAskAgain === false
-                  ? `Camera access is turned off for this app. Turn it on in your phone settings. ${
+                  ? `Camera access is blocked. Turn it back on in your phone settings, or in the browser's site permissions (the icon at the left of the address bar). ${
                       deniedBody ?? ''
                     }`.trim()
                   : deniedBody ?? 'Scanning needs the camera.'}
