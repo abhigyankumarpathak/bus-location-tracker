@@ -1,5 +1,5 @@
 import { StyleSheet, Text, View } from 'react-native';
-import { etaMinutes, formatEta } from '../lib/eta';
+import { etaMinutes, formatEta, hasPassedStop, isAtStop } from '../lib/eta';
 import type { Coord } from '../lib/eta';
 import type { VehicleLocation } from '../lib/types';
 import { Map } from './Map';
@@ -29,6 +29,13 @@ interface Props {
   hubName: string;
   /** Stops the van must still call at first, from lib/eta stopsStillToVisit(). */
   stopsBefore?: Coord[];
+  /**
+   * Every stop on the trip, in order. Used to work out whether the van is past
+   * this family's hub from its POSITION rather than from the driver having
+   * tapped Departed — without it a van that has driven by goes on reporting
+   * "12 minutes away" from a stop behind it.
+   */
+  route?: Coord[];
   /** Draw a small map with the van and the hub on it. */
   showMap?: boolean;
 }
@@ -39,6 +46,7 @@ export function VanEta({
   target,
   hubName,
   stopsBefore = [],
+  route = [],
   showMap = false,
 }: Props) {
   if (!location || !target) return null;
@@ -58,6 +66,9 @@ export function VanEta({
     );
   }
 
+  const van = { lat: location.lat, lng: location.lng };
+  const passed = route.length >= 2 && hasPassedStop(route, target, van);
+  const atStop = isAtStop(van, target);
   const minutes = etaMinutes(location, target, stopsBefore);
 
   const markers: MapMarker[] = [
@@ -67,11 +78,29 @@ export function VanEta({
 
   return (
     <View style={styles.wrap}>
-      <Text style={styles.eta}>
-        🚌 {formatEta(minutes)}
-        {minutes !== null && minutes > 0 ? ` from ${hubName}` : ''}
-      </Text>
-      {stopsBefore.length > 0 ? (
+      {atStop ? (
+        <Text style={styles.eta}>🚌 The van is at {hubName} now</Text>
+      ) : passed ? (
+        // Not an ETA at all. A number here would be a straight lie about a van
+        // that is already down the road, and "0 minutes" reads as "it is here".
+        <Text style={styles.eta}>🚌 The van has passed {hubName}</Text>
+      ) : (
+        <Text style={styles.eta}>
+          🚌 {formatEta(minutes)}
+          {minutes !== null && minutes > 0 ? ` from ${hubName}` : ''}
+        </Text>
+      )}
+      {passed && !atStop ? (
+        <Text style={styles.fine}>
+          It went by at about{' '}
+          {new Date(location.recorded_at).toLocaleTimeString([], {
+            hour: 'numeric',
+            minute: '2-digit',
+          })}
+          . If nobody was picked up, contact the transport office.
+        </Text>
+      ) : null}
+      {!passed && !atStop && stopsBefore.length > 0 ? (
         <Text style={styles.fine}>
           {stopsBefore.length} {stopsBefore.length === 1 ? 'stop' : 'stops'} to go first.
         </Text>

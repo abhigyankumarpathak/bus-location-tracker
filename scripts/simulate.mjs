@@ -39,6 +39,7 @@ const opts = {
   loop: has('loop'),
   reverse: has('reverse'),
   dryRun: has('dry-run'),
+  straight: has('straight'),
 };
 
 if (has('help') || (!opts.key && !opts.bus && !opts.dryRun)) {
@@ -55,6 +56,7 @@ Drive a fake bus along a route.
   --interval <sec>     Seconds between fixes. Default: 5
   --loop               Run the route over and over.
   --reverse            Drive it backwards (the afternoon run).
+  --straight           Ignore the road network and cut straight between stops.
   --dry-run            Print fixes instead of POSTing them.
 `);
   process.exit(has('help') ? 0 : 1);
@@ -147,6 +149,76 @@ async function resolveRoute(file) {
   }
 
   return points;
+}
+
+// ---------------------------------------------------------------- roads
+
+/**
+ * The actual road between two stops.
+ *
+ * A straight line between hubs puts the bus through back gardens and across the
+ * Christina River, which is fine for proving a pin moves and useless the moment
+ * anybody looks at the map. OSRM's public demo server returns real driving
+ * geometry, needs no API key and no billing account -- the same reasoning that
+ * put Nominatim behind the address lookup in src/lib/geocode.ts.
+ *
+ * It is a DEMO server with no uptime promise. A failure here falls back to the
+ * straight line and says so, because a simulator that refuses to start is worse
+ * than one drawing an approximate path.
+ */
+const OSRM = 'https://router.project-osrm.org/route/v1/driving';
+
+async function roadBetween(a, b) {
+  const pair = `${a.lng},${a.lat};${b.lng},${b.lat}`;
+  const res = await fetch(`${OSRM}/${pair}?overview=full&geometries=geojson`, {
+    headers: { 'User-Agent': 'school-transport-app/1.0 (route simulator)' },
+  });
+  if (!res.ok) throw new Error(`OSRM returned ${res.status}`);
+
+  const body = await res.json();
+  if (body.code !== 'Ok' || !body.routes?.length) {
+    throw new Error(`OSRM could not route this leg (${body.code})`);
+  }
+  const route = body.routes[0];
+  return {
+    path: route.geometry.coordinates.map(([lng, lat]) => ({ lat, lng })),
+    km: route.distance / 1000,
+  };
+}
+
+/**
+ * Turn the waypoint list into drivable legs.
+ *
+ * With roads on, the SHAPE POINTS in the route file are dropped: they exist to
+ * fake a road path, and OSRM supplies the real one. Only the named stops are
+ * routed through, which is also what makes the dwell logic below line up with
+ * the stops the app knows about.
+ */
+async function buildLegs(points) {
+  const named = points.filter((p) => p.name);
+  const via = !opts.straight && named.length >= 2 ? named : points;
+
+  const legs = [];
+  for (let i = 0; i < via.length - 1; i += 1) {
+    const from = via[i];
+    const to = via[i + 1];
+
+    if (opts.straight) {
+      legs.push({ from, to, path: [from, to], km: distance(from, to) / 1000, road: false });
+      continue;
+    }
+
+    try {
+      process.stdout.write(`  routing ${from.name ?? 'start'} -> ${to.name ?? 'end'} … `);
+      const { path, km } = await roadBetween(from, to);
+      console.log(`${km.toFixed(1)} km along ${path.length} points`);
+      legs.push({ from, to, path, km, road: true });
+    } catch (e) {
+      console.log(`FAILED (${e.message}) — falling back to a straight line`);
+      legs.push({ from, to, path: [from, to], km: distance(from, to) / 1000, road: false });
+    }
+  }
+  return legs;
 }
 
 // ---------------------------------------------------------------- geometry
@@ -259,38 +331,65 @@ async function report(deviceKey, fix) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Points every `stepM` metres along a polyline, with the heading of whatever
+ * segment each one falls on. The carry keeps the spacing even ACROSS segments —
+ * without it every corner in the road would emit a short step and the bus would
+ * appear to stutter at every junction.
+ */
+function* walk(path, stepM) {
+  let carry = 0;
+  for (let i = 0; i < path.length - 1; i += 1) {
+    const a = path[i];
+    const b = path[i + 1];
+    const segLen = distance(a, b);
+    if (segLen === 0) continue;
+    const heading = bearing(a, b);
+
+    let d = stepM - carry;
+    while (d <= segLen) {
+      yield { ...between(a, b, d / segLen), heading };
+      d += stepM;
+    }
+    carry = segLen - (d - stepM);
+  }
+}
+
 // ---------------------------------------------------------------- the run
 
-async function drive(deviceKey, points) {
+async function drive(deviceKey, legs) {
   const mps = (opts.speed * 1000) / 3600;
   const stepMetres = mps * opts.interval;
 
-  for (let i = 0; i < points.length - 1; i += 1) {
-    const from = points[i];
-    const to = points[i + 1];
-    const legMetres = distance(from, to);
-    const heading = bearing(from, to);
-    const steps = Math.max(1, Math.ceil(legMetres / stepMetres));
-
+  for (const leg of legs) {
     console.log(
-      `\n▸ ${from.name ?? `waypoint ${i + 1}`} → ${to.name ?? `waypoint ${i + 2}`}` +
-        `   ${(legMetres / 1000).toFixed(2)} km, ~${Math.round((legMetres / mps) / 60)} min`,
+      `\n▸ ${leg.from.name ?? 'start'} → ${leg.to.name ?? 'end'}` +
+        `   ${leg.km.toFixed(2)} km, ~${Math.round((leg.km * 1000) / mps / 60)} min` +
+        `${leg.road ? '' : '  (straight line)'}`,
     );
 
-    for (let s = 1; s <= steps; s += 1) {
-      const at = between(from, to, s / steps);
-      await report(deviceKey, { ...at, heading, speed: mps });
+    for (const at of walk(leg.path, stepMetres)) {
+      await report(deviceKey, { lat: at.lat, lng: at.lng, heading: at.heading, speed: mps });
       await sleep(opts.interval * 1000);
     }
 
+    // Land exactly on the stop rather than wherever the last whole step fell.
+    // The app decides "the van is at your hub" on a ~120 m radius, so stopping
+    // 200 m short is the difference between the demo working and not.
+    const heading = leg.path.length > 1
+      ? bearing(leg.path[leg.path.length - 2], leg.to)
+      : 0;
+    await report(deviceKey, { ...leg.to, heading, speed: 0 });
+    await sleep(opts.interval * 1000);
+
     // Sit at the stop. A real bus does, and it is the case that separates
     // "parked" from "signal lost" downstream — so the fixes keep coming.
-    const dwell = to.name ? (to.dwell ?? opts.dwell) : 0;
+    const dwell = leg.to.name ? (leg.to.dwell ?? opts.dwell) : 0;
     if (dwell > 0) {
-      console.log(`  … dwelling ${dwell}s at ${to.name}`);
+      console.log(`  … dwelling ${dwell}s at ${leg.to.name}`);
       const ticks = Math.max(1, Math.round(dwell / opts.interval));
       for (let t = 0; t < ticks; t += 1) {
-        await report(deviceKey, { ...to, heading, speed: 0 });
+        await report(deviceKey, { ...leg.to, heading, speed: 0 });
         await sleep(opts.interval * 1000);
       }
     }
@@ -307,8 +406,13 @@ if (opts.reverse) points = [...points].reverse();
 
 console.log(
   `${points.length} waypoints · ${opts.speed} km/h · fix every ${opts.interval}s` +
+    `${opts.straight ? ' · straight lines' : ' · following roads'}` +
     `${opts.loop ? ' · looping' : ''}${opts.dryRun ? ' · DRY RUN' : ''}`,
 );
+
+// Built once, not per lap: OSRM is a shared demo server and the road between
+// two hubs does not change between laps.
+const legs = await buildLegs(points);
 console.log(`Posting to ${opts.dryRun ? '(nowhere)' : `${SUPABASE_URL}/functions/v1/ingest-location`}`);
 
 process.on('SIGINT', () => {
@@ -317,7 +421,7 @@ process.on('SIGINT', () => {
 });
 
 do {
-  await drive(deviceKey, points);
+  await drive(deviceKey, legs);
   if (opts.loop) console.log('\n↻ Route complete — going round again. Ctrl-C to stop.');
 } while (opts.loop);
 

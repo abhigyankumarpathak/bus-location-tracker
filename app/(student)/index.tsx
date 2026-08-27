@@ -221,6 +221,10 @@ export default function StudentToday() {
                 stale={stale}
                 target={ref.stopCoords(row.pickup_stop_id)}
                 hubName={hub ?? 'your stop'}
+                route={ref
+                  .stopsFor(trip?.route_id)
+                  .map((st) => ref.stopCoords(st.id))
+                  .filter((c): c is { lat: number; lng: number } => c !== null)}
                 stopsBefore={
                   row.pickup_stop_id
                     ? stopsStillToVisit(
@@ -316,6 +320,10 @@ export default function StudentToday() {
               ref.stopName(mine.find((r) => r.trip_id === runningTrip.id)?.pickup_stop_id) ??
               'your stop'
             }
+            route={ref
+              .stopsFor(runningTrip.route_id)
+              .map((st) => ref.stopCoords(st.id))
+              .filter((c): c is { lat: number; lng: number } => c !== null)}
             showMap
           />
         </Card>

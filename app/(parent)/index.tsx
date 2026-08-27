@@ -231,6 +231,11 @@ function LiveVan({
       target={coordsOf(targetStopId)}
       hubName={hubName}
       stopsBefore={stopsStillToVisit(stops, targetStopId, hasDeparted, coordsOf)}
+      route={stops
+        .slice()
+        .sort((a, b) => a.seq - b.seq)
+        .map((s) => coordsOf(s.id))
+        .filter((c): c is Coord => c !== null)}
     />
   );
 }
