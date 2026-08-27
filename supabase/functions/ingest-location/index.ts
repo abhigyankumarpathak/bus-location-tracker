@@ -98,14 +98,28 @@ Deno.serve(async (req) => {
   // Attach the fix to the vehicle's currently running trip, if there is one, so
   // reports can tie a position back to a run. A tracker that reports outside of
   // any trip still gets stored, just without a trip_id.
-  const { data: trip } = await admin
-    .from('trips')
-    .select('id, routes!inner(vehicle_id)')
+  //
+  // This queried `trips` joined to `routes` until 26 Aug 2026. NEITHER TABLE
+  // EXISTS -- the schema has `daily_trips`, carrying vehicle_id directly. The
+  // error was destructured away, so every fix since the first one has been
+  // stored with trip_id null and nothing ever said so.
+  //
+  // No date filter on purpose: `daily_trips.date` is a local calendar date and
+  // this function has no idea what the operation's timezone is, so comparing it
+  // to a UTC "today" is the same four-hour bug the app already shipped once.
+  // Only one trip per vehicle is ever `active`, which is the real constraint.
+  const { data: trip, error: tripError } = await admin
+    .from('daily_trips')
+    .select('id')
+    .eq('vehicle_id', vehicle.id)
     .eq('status', 'active')
-    .eq('routes.vehicle_id', vehicle.id)
     .order('started_at', { ascending: false })
     .limit(1)
     .maybeSingle();
+
+  // A trip lookup that fails must not reject the fix -- the position is still
+  // worth storing without one. But it gets said out loud rather than swallowed.
+  if (tripError) console.error('trip lookup failed:', tripError.message);
 
   const recordedAt = fix.recorded_at ? new Date(fix.recorded_at as string) : new Date();
 
