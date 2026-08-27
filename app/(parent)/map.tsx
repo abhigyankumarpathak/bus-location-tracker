@@ -8,6 +8,7 @@ import {
   useVehicleLocation,
 } from '../../src/lib/hooks';
 import { ROUTE_TYPE_LABEL } from '../../src/lib/types';
+import { useRoadPath } from '../../src/lib/roads';
 import { Map } from '../../src/components/Map';
 import type { MapMarker } from '../../src/components/Map';
 import { GpsDisabled } from '../../src/components/Disabled';
@@ -116,6 +117,11 @@ export default function ParentMap() {
     [stops, ref],
   );
 
+  // Snapped to the road network. Falls back to the straight stop-to-stop path
+  // while it loads, and permanently if the routing service is unreachable — a
+  // map with a slightly wrong line beats one with no line.
+  const roadPath = useRoadPath(path);
+
   function openInMaps(lat: number, lng: number, label: string) {
     const url = Platform.select({
       ios: `maps://?daddr=${lat},${lng}&q=${encodeURIComponent(label)}`,
@@ -167,7 +173,7 @@ export default function ParentMap() {
         <Card style={styles.mapCard}>
           <Map
             markers={markers}
-            path={path}
+            path={roadPath}
             style={styles.map}
             zoom={van && !vanStale ? 14 : 13}
             center={van && !vanStale ? { lat: van.lat, lng: van.lng } : null}
