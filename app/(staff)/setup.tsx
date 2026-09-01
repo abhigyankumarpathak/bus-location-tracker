@@ -1826,6 +1826,16 @@ export default function StaffSetup() {
               />
             </Row>
 
+            {/* A disabled switch with no explanation is just a broken app. Every
+                other admin-only control on this screen says why; this one did
+                not, and the first person to meet it assumed the toggle was
+                broken rather than that they were a coordinator. */}
+            {!isAdmin ? (
+              <Text style={styles.fine}>
+                Only an administrator can change this. You are signed in as a coordinator.
+              </Text>
+            ) : null}
+
             {org?.attendance_only ? (
               <>
                 <Text style={styles.warn}>
