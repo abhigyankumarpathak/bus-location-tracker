@@ -96,7 +96,16 @@ with expected(kind, name, label) as (values
   -- The evening lock is the feature. A mark_attendance() missing it would pass
   -- an existence check and let a student mark themselves at breakfast.
   ('body',   'mark_attendance|too_early',            'ATTEND · evening lock present'),
-  ('body',   'mark_attendance|today_local',          'ATTEND · marks land on the local day')
+  ('body',   'mark_attendance|today_local',          'ATTEND · marks land on the local day'),
+  -- Expected absences (patch 8b). The denominator, and the club that cancelled.
+  ('table',  'attendance_absence',                   'AWAY · declared absences'),
+  ('func',   'declare_absence',                      'AWAY · parent/student/staff declare'),
+  ('func',   'cancel_absence',                       'AWAY · taking it back'),
+  ('func',   'absent_on',                            'AWAY · is this student away today'),
+  ('body',   'attendance_register|excused',          'AWAY · register knows the denominator'),
+  -- The one that would silently ruin the feature: a mark_attendance() that
+  -- refuses an excused student keeps them off the record, not off the bus.
+  ('body',   'mark_attendance|marked_after_absence', 'AWAY · club cancelled, they ride anyway')
 )
 select
   case when found then '✅ OK  ' else '❌ MISSING' end as status,

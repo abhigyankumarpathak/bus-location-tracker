@@ -4,19 +4,28 @@ import { useAuth } from '../../src/lib/auth';
 import { useFeatures } from '../../src/lib/org';
 import { useToday } from '../../src/lib/org';
 import { supabase } from '../../src/lib/supabase';
-import { decodeVanQr } from '../../src/lib/types';
-import type { Attendance, AttendanceResult } from '../../src/lib/types';
+import { ABSENCE_LABEL, decodeVanQr } from '../../src/lib/types';
+import type {
+  Attendance,
+  AttendanceAbsence,
+  AttendanceResult,
+  AbsenceKind,
+} from '../../src/lib/types';
 import { BoardingScanner } from '../../src/components/BoardingScanner';
 import type { ScanFeedback } from '../../src/components/BoardingScanner';
 import {
   Button,
   Card,
   ErrorText,
+  Field,
   Loading,
+  Row,
   Screen,
+  SectionLabel,
   Title,
   theme,
 } from '../../src/components/ui';
+import { alert } from '../../src/lib/alert';
 
 /**
  * The student's whole app in attendance-only mode.
@@ -38,9 +47,16 @@ export default function StudentAttendance() {
   const me = session?.user.id;
 
   const [mark, setMark] = useState<Attendance | null>(null);
+  const [away, setAway] = useState<AttendanceAbsence | null>(null);
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState('');
+
+  /** Telling the school you are not riding, and why. */
+  const [declaring, setDeclaring] = useState(false);
+  const [kind, setKind] = useState<AbsenceKind>('club');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
 
   const reload = useCallback(async () => {
     if (!me) return;
@@ -51,8 +67,58 @@ export default function StudentAttendance() {
       .eq('on_date', today)
       .maybeSingle();
     setMark((data as Attendance) ?? null);
+
+    // The span covering today, if there is one. Filtered client-side because a
+    // student has at most a handful of these and the query is simpler read.
+    const { data: spans } = await supabase
+      .from('attendance_absence')
+      .select('*')
+      .eq('student_id', me)
+      .is('cancelled_at', null)
+      .lte('on_date', today);
+    const covering =
+      ((spans as AttendanceAbsence[]) ?? []).find(
+        (a) => (a.end_date ?? a.on_date) >= today,
+      ) ?? null;
+    setAway(covering);
+
     setLoading(false);
   }, [me, today]);
+
+  async function declare() {
+    if (!me) return;
+    setError('');
+    setBusy(true);
+    const { data, error: e } = await supabase.rpc('declare_absence', {
+      target: me,
+      from_date: today,
+      to_date: null,
+      kind,
+      reason: reason.trim() || null,
+    });
+    setBusy(false);
+    if (e) return setError(e.message);
+
+    const res = data as { ok: boolean; message?: string };
+    if (!res?.ok) return setError(res?.message ?? 'That did not save.');
+
+    setDeclaring(false);
+    setReason('');
+    await reload();
+    alert(
+      'Told the school',
+      'Your family has been told too. If it turns out you are riding after all, just scan the code — that works and they will be told again.',
+    );
+  }
+
+  async function undeclare() {
+    if (!away) return;
+    setBusy(true);
+    const { error: e } = await supabase.rpc('cancel_absence', { absence_id: away.id });
+    setBusy(false);
+    if (e) return setError(e.message);
+    await reload();
+  }
 
   useEffect(() => {
     reload();
@@ -131,6 +197,86 @@ export default function StudentAttendance() {
         </Card>
       )}
 
+      {/*
+        Telling the school you are NOT riding.
+        Shown even when already marked away, so it can be taken back — and shown
+        even after scanning, because the only thing that would achieve then is
+        confusion, so it is not.
+      */}
+      {!mark ? (
+        <>
+          <SectionLabel>Not riding today?</SectionLabel>
+
+          {away ? (
+            <Card style={styles.away}>
+              <Text style={styles.awayTitle}>
+                {ABSENCE_LABEL[away.kind]}
+                {(away.end_date ?? away.on_date) !== away.on_date ? ' (several days)' : ''}
+              </Text>
+              <Text style={styles.doneBody}>
+                {away.source === 'student'
+                  ? 'You told the school you are not on the bus. Your family has been told.'
+                  : away.source === 'parent'
+                    ? 'Your family told the school you are not on the bus.'
+                    : 'The office has marked you as not riding.'}
+                {away.reason ? ` Reason: ${away.reason}` : ''}
+              </Text>
+              <Text style={styles.fine}>
+                If the club is cancelled and you do ride, just scan the code — that still works,
+                and your family will be told you are on the bus after all.
+              </Text>
+              <Button
+                label="Actually, I am riding"
+                variant="secondary"
+                loading={busy}
+                onPress={undeclare}
+              />
+            </Card>
+          ) : declaring ? (
+            <Card>
+              <Text style={styles.prompt}>Why not?</Text>
+              <Row style={styles.wrap}>
+                <Button
+                  label="Staying for a club"
+                  variant={kind === 'club' ? 'primary' : 'secondary'}
+                  onPress={() => setKind('club')}
+                />
+                <Button
+                  label="Not riding"
+                  variant={kind === 'absent' ? 'primary' : 'secondary'}
+                  onPress={() => setKind('absent')}
+                />
+              </Row>
+              <Field
+                label="Anything to add? (optional)"
+                value={reason}
+                onChangeText={setReason}
+                placeholder="Chess club until 5."
+              />
+              <Row style={styles.wrap}>
+                <Button label="Tell the school" loading={busy} onPress={declare} />
+                <Button label="Cancel" variant="ghost" onPress={() => setDeclaring(false)} />
+              </Row>
+              <Text style={styles.fine}>
+                Your parents are told as well — they should not find out from an empty seat.
+              </Text>
+            </Card>
+          ) : (
+            <Card>
+              <Button
+                label="I won't be on the bus"
+                variant="secondary"
+                onPress={() => setDeclaring(true)}
+              />
+              <Text style={styles.fine}>
+                Staying for a club, or getting home another way? Tell the school so nobody is
+                looking for you.
+              </Text>
+            </Card>
+          )}
+        </>
+      ) : null}
+
       <ErrorText>{error}</ErrorText>
 
       <BoardingScanner
@@ -159,5 +305,8 @@ const styles = StyleSheet.create({
   locked: { borderColor: theme.warn, gap: 8 },
   lockedTitle: { fontSize: 20, fontWeight: '700', color: theme.warn },
   prompt: { fontSize: 18, fontWeight: '700', color: theme.text, marginBottom: 4 },
+  wrap: { flexWrap: 'wrap' },
+  away: { borderColor: theme.accent, gap: 8 },
+  awayTitle: { fontSize: 18, fontWeight: '700', color: theme.accent },
   fine: { fontSize: 12, color: theme.faint, lineHeight: 17 },
 });

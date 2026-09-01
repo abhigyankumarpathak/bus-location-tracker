@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { alert } from '../../src/lib/alert';
 import { useToday } from '../../src/lib/org';
 import { supabase } from '../../src/lib/supabase';
+import { ABSENCE_LABEL, registerCounts } from '../../src/lib/types';
 import type { RegisterRow } from '../../src/lib/types';
 import {
   Badge,
@@ -64,7 +65,11 @@ export default function StaffAttendance() {
 
   if (loading) return <Loading />;
 
-  const missing = rows.filter((r) => !r.present);
+  const counts = registerCounts(rows);
+  // Three groups, and the ORDER is the point. Missing-and-not-excused is the
+  // only one that needs a person to do something.
+  const missing = rows.filter((r) => !r.present && !r.excused);
+  const away = rows.filter((r) => !r.present && r.excused);
   const present = rows.filter((r) => r.present);
 
   return (
@@ -79,12 +84,30 @@ export default function StaffAttendance() {
         Attendance
       </Title>
 
-      <Card>
+      {/*
+        "34 of 35", not "34 of 45".
+        Ten students nobody expects are not a problem, and counting them as
+        missing buries the one student who IS. The denominator is everyone
+        expected — total minus declared absences — and an excused student who
+        scanned anyway is counted in BOTH halves, because a cancelled club puts
+        them visibly on the bus.
+      */}
+      <Card style={counts.missing > 0 ? styles.alarm : undefined}>
+        <Text style={styles.headline}>
+          {counts.marked} of {counts.expected} aboard
+        </Text>
         <Row style={styles.stats}>
-          <Stat label="Marked" value={String(present.length)} tone={theme.success} />
-          <Stat label="Not marked" value={String(missing.length)} tone={theme.warn} />
-          <Stat label="Students" value={String(rows.length)} tone={theme.text} />
+          <Stat
+            label="Not marked"
+            value={String(counts.missing)}
+            tone={counts.missing > 0 ? theme.danger : theme.faint}
+          />
+          <Stat label="Expected away" value={String(counts.away)} tone={theme.muted} />
+          <Stat label="On roll" value={String(counts.total)} tone={theme.text} />
         </Row>
+        {counts.missing === 0 ? (
+          <Text style={styles.fine}>Everyone expected this evening has been marked.</Text>
+        ) : null}
       </Card>
 
       <ErrorText>{error}</ErrorText>
@@ -93,7 +116,7 @@ export default function StaffAttendance() {
 
       {missing.length > 0 ? (
         <>
-          <SectionLabel>Not marked ({missing.length})</SectionLabel>
+          <SectionLabel>Not marked — nobody expected them away ({missing.length})</SectionLabel>
           {missing.map((r) => (
             <Card key={r.student_id}>
               <Row style={styles.between}>
@@ -119,6 +142,26 @@ export default function StaffAttendance() {
                   )
                 }
               />
+            </Card>
+          ))}
+        </>
+      ) : null}
+
+      {away.length > 0 ? (
+        <>
+          <SectionLabel>Expected away ({away.length})</SectionLabel>
+          {away.map((r) => (
+            <Card key={r.student_id} style={styles.excused}>
+              <Row style={styles.between}>
+                <View style={styles.grow}>
+                  <Text style={styles.name}>{r.full_name}</Text>
+                  <Text style={styles.fine}>
+                    {r.excuse_kind ? ABSENCE_LABEL[r.excuse_kind] : 'Not riding'}
+                    {r.excuse_reason ? ` · ${r.excuse_reason}` : ''}
+                  </Text>
+                </View>
+                <Badge label="Not riding" tone="accent" />
+              </Row>
             </Card>
           ))}
         </>
@@ -185,6 +228,9 @@ const styles = StyleSheet.create({
   grow: { flex: 1 },
   stats: { gap: 0 },
   stat: { flex: 1, gap: 2 },
+  headline: { fontSize: 28, fontWeight: '700', color: theme.text },
+  alarm: { borderColor: theme.danger },
+  excused: { borderColor: theme.border, opacity: 0.9 },
   statValue: { fontSize: 24, fontWeight: '700' },
   statLabel: { fontSize: 11, color: theme.faint },
   name: { fontSize: 16, fontWeight: '700', color: theme.text },

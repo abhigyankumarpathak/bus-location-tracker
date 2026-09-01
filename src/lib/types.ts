@@ -368,6 +368,39 @@ export interface Attendance {
   note: string | null;
 }
 
+/**
+ * A declared absence: this student is not expected on the bus.
+ *
+ * A SPAN, not a row per day — a fortnight away is one thing to declare and one
+ * thing to cancel. Read it as `on_date`..`end_date ?? on_date`.
+ *
+ * Cancelled rather than deleted when it stops being true, because "they said
+ * they were away and then rode anyway" is a different fact from "nobody ever
+ * said anything", and a deleted row would look like the second.
+ */
+export interface AttendanceAbsence {
+  id: string;
+  student_id: string;
+  on_date: string;
+  end_date: string | null;
+  kind: AbsenceKind;
+  reason: string | null;
+  declared_by: string | null;
+  /** Who spoke for the student. A child telling the school is not the same event. */
+  source: 'parent' | 'student' | 'staff';
+  created_at: string;
+  cancelled_at: string | null;
+  cancelled_by: string | null;
+}
+
+export type AbsenceKind = 'absent' | 'club' | 'other';
+
+export const ABSENCE_LABEL: Record<AbsenceKind, string> = {
+  absent: 'Not riding',
+  club: 'Staying for a club',
+  other: 'Not riding',
+};
+
 /** A row of `attendance_register()` — every active student, marked or not. */
 export interface RegisterRow {
   student_id: string;
@@ -376,6 +409,26 @@ export interface RegisterRow {
   marked_at: string | null;
   source: 'scan' | 'staff' | null;
   note: string | null;
+  /** Expected away, so they are out of the denominator rather than missing. */
+  excused: boolean;
+  excuse_kind: AbsenceKind | null;
+  excuse_reason: string | null;
+  excuse_id: string | null;
+}
+
+/**
+ * The three numbers that make a register worth opening.
+ *
+ * `expected` deliberately counts an excused student who scanned ANYWAY: a club
+ * that cancelled puts them back on the bus, so they belong in both halves of
+ * "34 of 35" rather than vanishing from the count they are visibly part of.
+ */
+export function registerCounts(rows: RegisterRow[]) {
+  const total = rows.length;
+  const marked = rows.filter((r) => r.present).length;
+  const away = rows.filter((r) => r.excused && !r.present).length;
+  const expected = total - away;
+  return { total, marked, away, expected, missing: expected - marked };
 }
 
 /** What `mark_attendance()` answers with. Never an exception. */
@@ -389,7 +442,9 @@ export interface AttendanceResult {
     | 'too_early'
     | 'unknown_code'
     | 'already_marked'
-    | 'marked';
+    | 'marked'
+    /** Was down as away — the club cancelled and they rode after all. */
+    | 'marked_after_absence';
   message: string;
   at?: string;
 }

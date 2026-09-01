@@ -288,6 +288,12 @@ begin
     delete from attendance where on_date < cutoff returning 1
   ) select count(*) into d_attend from gone;
 
+  -- Declared absences go on the same clock. A cancelled club three weeks ago is
+  -- not a record anybody will ever need, and unlike an override it carries no
+  -- disputed claim.
+  delete from attendance_absence
+  where coalesce(end_date, on_date) < cutoff;
+
   -- Routine status transitions. An override always carries a reason (the app
   -- demands one, blueprint §2.1), so `reason is not null` is exactly the set
   -- worth keeping — and it is kept forever.
