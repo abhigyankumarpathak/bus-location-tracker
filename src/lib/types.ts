@@ -47,6 +47,18 @@ export interface Organization {
    * the only mode built; 'scan' (NFC/QR self check-in) is reserved for later.
    */
   attendance_mode: 'manual' | 'scan';
+
+  /**
+   * ATTENDANCE-ONLY MODE. Hides routes, trips, vehicles, check-in and the
+   * driver entirely, and shows a register instead: a student scans one printed
+   * code and is marked present for the evening.
+   *
+   * A toggle. Nothing is destroyed by turning it on — every route, trip and
+   * rider row stays exactly where it was and is simply not rendered.
+   */
+  attendance_only: boolean;
+  /** "This is only for evenings." Wall clock, in `time_zone`. */
+  attendance_opens_at: string;
   /**
    * Weeks of full operational detail to keep. Older routine data is purged once
    * it has been archived into a weekly report and sent to the family. Incidents
@@ -336,6 +348,50 @@ export interface SelfScanResult {
     | 'boarded';
   message: string;
   vehicle?: string;
+}
+
+/**
+ * One mark in the register: this student presented the code on this evening.
+ *
+ * There is no `absent` row and deliberately so — a missing row is the lack of a
+ * scan, not an assertion that anybody was away. Screens must render it as
+ * "not marked", never as "absent".
+ */
+export interface Attendance {
+  id: string;
+  student_id: string;
+  on_date: string;
+  marked_at: string;
+  /** A scan and a staff correction are different facts. Never merge them. */
+  source: 'scan' | 'staff';
+  marked_by: string | null;
+  note: string | null;
+}
+
+/** A row of `attendance_register()` — every active student, marked or not. */
+export interface RegisterRow {
+  student_id: string;
+  full_name: string;
+  present: boolean;
+  marked_at: string | null;
+  source: 'scan' | 'staff' | null;
+  note: string | null;
+}
+
+/** What `mark_attendance()` answers with. Never an exception. */
+export interface AttendanceResult {
+  ok: boolean;
+  tone: 'success' | 'warn' | 'danger';
+  reason:
+    | 'signed_out'
+    | 'inactive'
+    | 'not_enabled'
+    | 'too_early'
+    | 'unknown_code'
+    | 'already_marked'
+    | 'marked';
+  message: string;
+  at?: string;
 }
 
 /** One row of `vehicle_board_codes()` — what Setup needs to print the cards. */

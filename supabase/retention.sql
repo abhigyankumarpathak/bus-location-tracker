@@ -232,6 +232,7 @@ language plpgsql security definer set search_path = public as $$
 declare
   keep_weeks int;
   cutoff date;
+  d_attend int := 0;
   d_status int := 0;
   d_trips int := 0;
   d_locs int := 0;
@@ -278,6 +279,15 @@ begin
     returning 1
   ) select count(*) into d_notifs from gone;
 
+  -- The attendance register, on the same clock as everything else. A mark is a
+  -- one-line fact -- this student presented a code that evening -- and three
+  -- weeks on it is only taking up space. Staff-marked rows go too: `source` is
+  -- part of the record, not a reason to keep it forever, and unlike an override
+  -- it carries no disputed claim about a child's whereabouts.
+  with gone as (
+    delete from attendance where on_date < cutoff returning 1
+  ) select count(*) into d_attend from gone;
+
   -- Routine status transitions. An override always carries a reason (the app
   -- demands one, blueprint §2.1), so `reason is not null` is exactly the set
   -- worth keeping — and it is kept forever.
@@ -298,6 +308,7 @@ begin
       'student_trip_status', d_status,
       'daily_trips', d_trips,
       'vehicle_locations', d_locs,
+      'attendance', d_attend,
       'notifications', d_notifs,
       'audit_logs', d_audit
     )

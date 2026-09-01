@@ -82,7 +82,21 @@ with expected(kind, name, label) as (values
   -- flip, which is why it never raised -- schema.sql keeps it deliberately
   -- until the new model has survived a term.
   ('column', 'student_trip_status.boarding_code',    'SPAN · old per-rider scan token'),
-  ('func',   'new_boarding_code',                    'SPAN · what generates it')
+  ('func',   'new_boarding_code',                    'SPAN · what generates it'),
+  -- Attendance-only mode (patch 8). A toggle, so every check here is about the
+  -- machinery existing, not about it being switched on.
+  ('column', 'organization.attendance_only',         'ATTEND · the toggle'),
+  ('column', 'organization.attendance_opens_at',     'ATTEND · the evening lock'),
+  ('table',  'attendance',                           'ATTEND · the register'),
+  ('table',  'attendance_code',                      'ATTEND · the printed card secret'),
+  ('func',   'mark_attendance',                      'ATTEND · a student marks themselves'),
+  ('func',   'set_attendance',                       'ATTEND · staff mark by hand'),
+  ('func',   'attendance_register',                  'ATTEND · today, marked and not'),
+  ('func',   'rotate_attendance_code',               'ATTEND · reissue a shared card'),
+  -- The evening lock is the feature. A mark_attendance() missing it would pass
+  -- an existence check and let a student mark themselves at breakfast.
+  ('body',   'mark_attendance|too_early',            'ATTEND · evening lock present'),
+  ('body',   'mark_attendance|today_local',          'ATTEND · marks land on the local day')
 )
 select
   case when found then '✅ OK  ' else '❌ MISSING' end as status,

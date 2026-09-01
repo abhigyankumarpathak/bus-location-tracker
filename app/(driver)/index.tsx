@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { useAuth } from '../../src/lib/auth';
+import { useFeatures } from '../../src/lib/org';
 import { ensureTodaysTrips, useReference, useTripStatuses } from '../../src/lib/hooks';
 import { startOutboxSync, stopOutboxSync } from '../../src/lib/outbox';
 import { enforceTrackingScope } from '../../src/lib/tracking';
@@ -31,6 +32,7 @@ import { PushStatus } from '../../src/components/PushStatus';
 export default function DriverToday() {
   const { profile, signOut } = useAuth();
   const ref = useReference();
+  const { attendanceOnly } = useFeatures();
   const { rows, trips, loading, reload } = useTripStatuses();
 
   useEffect(() => {
@@ -65,6 +67,31 @@ export default function DriverToday() {
   }, [loading, trips]);
 
   if (loading || ref.loading) return <Loading />;
+
+  // Attendance-only mode has no trips, no routes and no driver role to speak of.
+  // Say that plainly rather than showing an empty trip list, which reads as "the
+  // office forgot to assign you" — the single most alarming thing a driver can
+  // see at 6am.
+  if (attendanceOnly) {
+    return (
+      <Screen>
+        <Title sub={profile?.full_name || undefined}>Today</Title>
+        <Card>
+          <Text style={styles.routeName}>Attendance-only mode is on</Text>
+          <Text style={styles.fine}>
+            The transport office has switched this app to recording attendance only. There are no
+            routes or trips to drive while it is on, and nothing is expected of you here.
+          </Text>
+          <Text style={styles.fine}>
+            Your trips, and everything already recorded against them, are untouched — they return
+            the moment the office switches the mode back off.
+          </Text>
+        </Card>
+        <SectionLabel>Account</SectionLabel>
+        <Button label="Sign out" variant="secondary" onPress={signOut} />
+      </Screen>
+    );
+  }
 
   return (
     <Screen>

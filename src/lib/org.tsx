@@ -40,6 +40,21 @@ export function useFeatures() {
      * against the audit log, so a stale client cannot talk its way past it.
      */
     undoWindowSec: org?.undo_window_sec ?? 90,
+
+    /**
+     * ATTENDANCE-ONLY MODE. Every screen that shows a route, a trip, a vehicle
+     * or a check-in reads this and renders the register instead.
+     *
+     * Defaults to FALSE when the org row has not loaded yet, which is the safe
+     * way round: a flicker of the full app is a cosmetic problem, whereas
+     * defaulting to true would blank a driver's roster mid-route on a slow
+     * connection.
+     */
+    attendanceOnly: org?.attendance_only ?? false,
+    /** "This is only for evenings." Wall clock in the operation's timezone. */
+    attendanceOpensAt: org?.attendance_opens_at ?? '12:00',
+    /** How long the register is kept before the Sunday purge clears it. */
+    retentionWeeks: org?.retention_weeks ?? 3,
   };
 }
 

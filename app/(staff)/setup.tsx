@@ -155,6 +155,9 @@ export default function StaffSetup() {
   const [boardCodes, setBoardCodes] = useState<Record<string, string>>({});
   /** Which van's card is expanded for printing. One at a time — they are large. */
   const [showingCard, setShowingCard] = useState<string | null>(null);
+  /** The attendance-only card, and whether it is expanded. */
+  const [attendCode, setAttendCode] = useState<string | null>(null);
+  const [showAttendCard, setShowAttendCard] = useState(false);
 
   /** Which route is expanded, and which panel inside it. */
   const [openRoute, setOpenRoute] = useState<string | null>(null);
@@ -230,6 +233,9 @@ export default function StaffSetup() {
     // The printed boarding cards. Its own RPC rather than a select, because
     // vehicle_devices is admin-read-only to keep the GPS key out of reach and
     // this hands back the boarding secret alone.
+    const { data: card } = await supabase.rpc('attendance_card');
+    setAttendCode((card as { code?: string } | null)?.code ?? null);
+
     const { data: cards } = await supabase.rpc('vehicle_board_codes');
     setBoardCodes(
       Object.fromEntries(
@@ -543,6 +549,8 @@ export default function StaffSetup() {
     checkin_window_min?: number;
     watchdog_enabled?: boolean;
     time_zone?: string;
+    attendance_only?: boolean;
+    attendance_opens_at?: string;
     watchdog_trip_start_min?: number;
     watchdog_stop_arrival_min?: number;
     watchdog_waiting_min?: number;
@@ -1786,6 +1794,129 @@ export default function StaffSetup() {
           </Card>
 
           {/*
+            ATTENDANCE-ONLY MODE. Placed first because it is the one switch that
+            changes what this product IS, rather than what it includes.
+          */}
+          <SectionLabel>Attendance-only mode</SectionLabel>
+          <Card style={org?.attendance_only ? styles.modeOn : undefined}>
+            <Row style={styles.between}>
+              <View style={styles.grow}>
+                <Text style={styles.name}>Attendance-only mode</Text>
+                <Text style={styles.fine}>
+                  {org?.attendance_only
+                    ? 'ON. Routes, trips, vehicles, check-in and the driver app are hidden. Students scan one printed code to mark attendance; you see the register.'
+                    : 'Off. The full transport platform is running.'}
+                </Text>
+              </View>
+              <Switch
+                value={org?.attendance_only ?? false}
+                disabled={!isAdmin}
+                onValueChange={(v) =>
+                  Alert.alert(
+                    v ? 'Switch to attendance-only?' : 'Switch back to the full platform?',
+                    v
+                      ? 'Everyone sees a register instead of the transport app. Nothing is deleted — every route, trip and record stays exactly where it is and comes back the moment you switch this off.'
+                      : 'Routes, trips, vehicles and the driver app all return, with their history intact.',
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: v ? 'Switch on' : 'Switch off', onPress: () => setFlag({ attendance_only: v }) },
+                    ],
+                  )
+                }
+              />
+            </Row>
+
+            {org?.attendance_only ? (
+              <>
+                <Text style={styles.warn}>
+                  Nothing has been deleted. This is a view, not a migration — every route, trip
+                  and rider record is untouched underneath and returns when you switch it off.
+                </Text>
+
+                <Text style={styles.fine}>
+                  Scanning opens at {(org?.attendance_opens_at ?? '12:00').slice(0, 5)} — before
+                  that a student is told “this is only for evenings”.
+                </Text>
+                <Row style={styles.wrap}>
+                  {['11:00', '12:00', '13:00', '15:00'].map((t) => (
+                    <Button
+                      key={t}
+                      label={t}
+                      variant={(org?.attendance_opens_at ?? '12:00').slice(0, 5) === t ? 'primary' : 'secondary'}
+                      disabled={!isAdmin}
+                      onPress={() => setFlag({ attendance_opens_at: `${t}:00` })}
+                    />
+                  ))}
+                </Row>
+
+                {attendCode ? (
+                  showAttendCard ? (
+                    <View style={styles.cardPrint}>
+                      <Text style={styles.cardTitle}>Scan to mark attendance</Text>
+                      <View style={styles.cardPlate}>
+                        <QRCode
+                          value={encodeVanQr(attendCode)}
+                          size={200}
+                          backgroundColor="#FFFFFF"
+                          color="#000000"
+                        />
+                      </View>
+                      <Text style={styles.cardHelp}>
+                        Open the app · Scan QR code · Point at this code
+                      </Text>
+                      <Text style={styles.warn}>
+                        This code does not rotate. A photograph of it marks its holder attended
+                        from anywhere, on any evening, until it is reissued — so put it where
+                        students scan it in front of someone, and reissue it if it gets shared.
+                      </Text>
+                      <Row style={styles.wrap}>
+                        <Button
+                          label="Hide"
+                          variant="secondary"
+                          style={styles.grow}
+                          onPress={() => setShowAttendCard(false)}
+                        />
+                        {isAdmin ? (
+                          <Button
+                            label="Reissue"
+                            variant="danger"
+                            style={styles.grow}
+                            onPress={() =>
+                              Alert.alert(
+                                'Reissue the attendance code?',
+                                'Every printed card stops working immediately and nobody can mark attendance until a new one is up. Do this if the code has been photographed or shared.',
+                                [
+                                  { text: 'Cancel', style: 'cancel' },
+                                  {
+                                    text: 'Reissue',
+                                    style: 'destructive',
+                                    onPress: async () => {
+                                      const { error: e } = await supabase.rpc('rotate_attendance_code');
+                                      if (e) return setError(e.message);
+                                      await load();
+                                      Alert.alert('Code reissued', 'Print the new card before this evening.');
+                                    },
+                                  },
+                                ],
+                              )
+                            }
+                          />
+                        ) : null}
+                      </Row>
+                    </View>
+                  ) : (
+                    <Button
+                      label="Attendance card"
+                      variant="secondary"
+                      onPress={() => setShowAttendCard(true)}
+                    />
+                  )
+                ) : null}
+              </>
+            ) : null}
+          </Card>
+
+          {/*
             N4: these were SQL-only until now. Deliberately placed after the
             watchdog work, because S4 changed what they mean — the cutoff is no
             longer the thing that decides whether an absence is automatic.
@@ -2002,6 +2133,7 @@ const styles = StyleSheet.create({
     borderTopColor: theme.border,
   },
   cardTitle: { fontSize: 20, fontWeight: '700', color: theme.text },
+  modeOn: { borderColor: theme.accent },
   cardVan: { fontSize: 14, fontWeight: '600', color: theme.accent },
   // White regardless of theme: a camera needs the contrast, and this gets
   // printed on paper.
