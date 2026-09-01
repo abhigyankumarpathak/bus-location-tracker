@@ -1,0 +1,43 @@
+# Render deployment. The counterpart to .replit — same static build, different host.
+#
+# WHY A STATIC SITE AND NOT A WEB SERVICE. `expo export --platform web` produces
+# a plain folder of files. There is no server to run, nothing to keep warm, and
+# nothing to pay for while it idles. A Web Service here would be a Node process
+# whose entire job is handing over files Render's CDN already serves better.
+#
+# Commit this file and point Render at the repo (Blueprint), or copy the values
+# into the dashboard by hand — both end up in the same place.
+services:
+  - type: web
+    name: bus-tracker
+    runtime: static
+
+    buildCommand: npm install && npx expo export --platform web
+    staticPublishPath: ./dist
+
+    envVars:
+      # Expo 57 and React Native 0.86 need a modern Node. Render's default has
+      # been older than this in the past, and the failure is a wall of module
+      # syntax errors rather than anything that names the version.
+      - key: NODE_VERSION
+        value: "20"
+      # The bundler is the memory-hungry part; the same ceiling .replit sets.
+      - key: NODE_OPTIONS
+        value: "--max-old-space-size=2048"
+      # sync: false means "prompt me in the dashboard, do not store it here".
+      # The publishable key is designed to ship in the bundle — RLS is what
+      # protects the data — but a repo is still the wrong place to keep either.
+      - key: EXPO_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+        sync: false
+
+    # LOAD-BEARING. expo-router is a single-page app: every screen is a client
+    # route that exists only once the bundle has booted. Without this, Render
+    # looks for a file called /sign-in on disk, does not find one, and returns
+    # 404 — so the homepage works, every link works, and any refresh or shared
+    # link 404s. That is a confusing failure to debug after the fact.
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
