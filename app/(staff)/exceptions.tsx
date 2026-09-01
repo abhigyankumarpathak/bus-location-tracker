@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
-import { Alert, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+import { alert } from '../../src/lib/alert';
 import { useAuth } from '../../src/lib/auth';
 import { supabase } from '../../src/lib/supabase';
 import { sweepIfDue, useReference, useTripStatuses } from '../../src/lib/hooks';
@@ -130,7 +131,10 @@ export default function StaffExceptions() {
     await load();
   }
 
-  async function resolveAlert(alert: WatchdogAlert) {
+  // Named `item`, not `alert`: there is now an imported alert() helper in scope,
+  // and a parameter shadowing it inside this function is a trap for whoever adds
+  // a confirmation here next.
+  async function resolveAlert(item: WatchdogAlert) {
     setError('');
     const { error: e } = await supabase
       .from('watchdog_alerts')
@@ -139,7 +143,7 @@ export default function StaffExceptions() {
         resolved_by: profile?.id,
         resolution: `Acknowledged by ${profile?.full_name ?? 'the office'}.`,
       })
-      .eq('id', alert.id);
+      .eq('id', item.id);
     if (e) {
       setError(e.message);
       return;
@@ -149,7 +153,7 @@ export default function StaffExceptions() {
 
   async function override(row: StudentTripStatus, status: RiderStatus) {
     if (!reason.trim()) {
-      Alert.alert(
+      alert(
         'Reason required',
         'Overriding the driver’s record needs a reason. It is recorded in the audit log.',
       );

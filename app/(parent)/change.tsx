@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { alert } from '../../src/lib/alert';
 import { useAuth } from '../../src/lib/auth';
 import { useOrg, useToday } from '../../src/lib/org';
 import { supabase } from '../../src/lib/supabase';
@@ -147,7 +148,7 @@ export default function ParentChange() {
 
     setReason('');
     await load();
-    Alert.alert(
+    alert(
       span ? 'Sent — every day covered' : 'Sent',
       span
         ? `${nameFor(childId)} is off from ${date} to ${span}. That is one request, not one per day — the driver's roster updates for each of those days as it is built.`

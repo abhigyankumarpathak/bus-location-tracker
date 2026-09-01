@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+import { alert } from '../../src/lib/alert';
 import { useToday } from '../../src/lib/org';
 import { supabase } from '../../src/lib/supabase';
 import type { RegisterRow } from '../../src/lib/types';
@@ -108,7 +109,7 @@ export default function StaffAttendance() {
                 variant="secondary"
                 loading={busy === r.student_id}
                 onPress={() =>
-                  Alert.alert(
+                  alert(
                     `Mark ${r.full_name} attended?`,
                     'Use this when the student is here but could not scan — a flat phone, a forgotten one. The record will show it was marked by the office rather than scanned.',
                     [
@@ -148,7 +149,7 @@ export default function StaffAttendance() {
                 variant="ghost"
                 loading={busy === r.student_id}
                 onPress={() =>
-                  Alert.alert(
+                  alert(
                     `Remove ${r.full_name}'s mark?`,
                     'The register will show them as not marked. Only do this if it was recorded in error.',
                     [

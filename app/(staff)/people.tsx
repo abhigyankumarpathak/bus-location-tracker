@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
-import { Alert, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { alert } from '../../src/lib/alert';
 import { useFocusEffect } from 'expo-router';
 import { useAuth } from '../../src/lib/auth';
 import { supabase } from '../../src/lib/supabase';
@@ -149,7 +150,7 @@ export default function StaffPeople() {
     setInviteEmail('');
     await load();
 
-    Alert.alert(
+    alert(
       'Invite created',
       `${invite.full_name || 'They'} can now sign up as a ${invite.role} with the code:\n\n${invite.code}\n\nIt works once and expires in 14 days.`,
       [
@@ -206,7 +207,7 @@ export default function StaffPeople() {
     setRemoving(null);
     setReason(DEFAULT_REASON);
     await load();
-    Alert.alert('Removed', 'They will see your message the next time they try to sign in.');
+    alert('Removed', 'They will see your message the next time they try to sign in.');
   }
 
   async function updateStudent(studentId: string, patch: Partial<Student>) {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { alert } from '../../../src/lib/alert';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../../src/lib/auth';
 import { useFeatures } from '../../../src/lib/org';
@@ -355,7 +356,7 @@ export default function DriverTrip() {
   }
 
   function confirmLeaveAnyway(stopId: string, unresolved: StudentTripStatus[], where: string) {
-    Alert.alert(
+    alert(
       `Leave ${where} without ${unresolved.length === 1 ? 'them' : 'all of them'}?`,
       `${unresolved
         .map((r) => `• ${nameOf(r.student_id)} — ${RIDER_STATUS_LABEL[r.status]}`)
@@ -463,7 +464,7 @@ export default function DriverTrip() {
   async function boardAnyway(row: StudentTripStatus) {
     const note = turnUpNote.trim();
     if (!note) {
-      Alert.alert(
+      alert(
         'Say what happened',
         'Boarding a student who is marked as not travelling needs a note. It goes to their parents and the transport office.',
       );
@@ -516,7 +517,7 @@ export default function DriverTrip() {
   }
 
   function confirmDropAll(stopId: string, ids: string[], where: string) {
-    Alert.alert(
+    alert(
       `Drop off ${ids.length} students?`,
       `This records all ${ids.length} as dropped off safely at ${where}, and tells their parents.\n\nIf anyone did NOT get off here, cancel and mark them first — then this button covers whoever is left.`,
       [
@@ -529,7 +530,7 @@ export default function DriverTrip() {
   function confirmUnableToDrop(row: StudentTripStatus) {
     // Blueprint §6.3: the student stays onboard and the coordinator must act.
     // This blocks the trip from closing, so make sure it is not a misfire.
-    Alert.alert(
+    alert(
       `Unable to drop off ${nameOf(row.student_id)}?`,
       'The student stays on the vehicle and the transport office is alerted immediately. You will not be able to end this trip until a coordinator resolves it.',
       [
@@ -568,7 +569,7 @@ export default function DriverTrip() {
     // us say WHO, rather than showing a bare Postgres error.
     const unresolved = riders.filter((r) => !isFinal(r.status));
     if (unresolved.length) {
-      Alert.alert(
+      alert(
         'Cannot end the trip yet',
         `These students have no final status:\n\n${unresolved
           .map((r) => `• ${nameOf(r.student_id)} — ${RIDER_STATUS_LABEL[r.status]}`)
@@ -597,7 +598,7 @@ export default function DriverTrip() {
     setTrackingNote('');
 
     await reload();
-    Alert.alert(
+    alert(
       'Trip completed',
       r.queued
         ? 'Every student has a final status. This phone has no signal, so the office will see it as soon as you do — nothing is lost in the meantime.'
@@ -633,7 +634,7 @@ export default function DriverTrip() {
     if (e) return setError(e.message);
     setIncidentNote('');
     await reload();
-    Alert.alert('Families told', `Every remaining stop on this route moved by ${minutes} minutes.`);
+    alert('Families told', `Every remaining stop on this route moved by ${minutes} minutes.`);
   }
 
   /**
@@ -670,7 +671,7 @@ export default function DriverTrip() {
     if (!wrongStopFor) return;
     const note = wrongStopNote.trim();
     if (!note) {
-      Alert.alert('Say what happened', 'Boarding a student at a stop that is not theirs needs a note.');
+      alert('Say what happened', 'Boarding a student at a stop that is not theirs needs a note.');
       return;
     }
     // NOT queueable: the server validates which stop this rider may be moved to
@@ -719,7 +720,7 @@ export default function DriverTrip() {
       return;
     }
     setIncidentNote('');
-    Alert.alert(
+    alert(
       'Reported',
       r.queued
         ? 'Saved on this phone. It sends the moment you have signal — but if this is urgent, radio or call it in as well rather than waiting.'

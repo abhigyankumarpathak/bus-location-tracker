@@ -1,4 +1,5 @@
-import { Alert, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+import { alert } from '../lib/alert';
 import { discard, retryFailed, useOutbox } from '../lib/outbox';
 import { Button, Card, Row, theme } from './ui';
 
@@ -70,7 +71,7 @@ export function OutboxBanner() {
                 label="Discard this one"
                 variant="ghost"
                 onPress={() =>
-                  Alert.alert(
+                  alert(
                     'Discard this record?',
                     `“${a.label}” will be thrown away and no record of it will exist anywhere. Only do this if the office has told you it is already sorted.`,
                     [

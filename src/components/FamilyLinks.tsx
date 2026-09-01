@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Linking, StyleSheet, Text, View } from 'react-native';
+import { Linking, StyleSheet, Text, View } from 'react-native';
+import { alert } from '../lib/alert';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import type { Profile, Role } from '../lib/types';
@@ -95,7 +96,7 @@ export function FamilyLinks({ perspective }: { perspective: 'student' | 'parent'
       }
 
       setContact('');
-      Alert.alert('Request sent', `${found.full_name} has to accept before you are linked.`);
+      alert('Request sent', `${found.full_name} has to accept before you are linked.`);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not send the request.');
@@ -110,7 +111,7 @@ export function FamilyLinks({ perspective }: { perspective: 'student' | 'parent'
   }
 
   function onRemove(link: LinkRow) {
-    Alert.alert('Remove link?', `This unlinks you from ${link.other?.full_name ?? 'this person'}.`, [
+    alert('Remove link?', `This unlinks you from ${link.other?.full_name ?? 'this person'}.`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Remove',
@@ -125,7 +126,7 @@ export function FamilyLinks({ perspective }: { perspective: 'student' | 'parent'
 
   function call(phone: string | null) {
     if (!phone) {
-      Alert.alert('No phone number', 'This person has not added one.');
+      alert('No phone number', 'This person has not added one.');
       return;
     }
     Linking.openURL(`tel:${phone.replace(/[^\d+]/g, '')}`);

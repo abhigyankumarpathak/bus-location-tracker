@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+import { alert } from '../../src/lib/alert';
 import { useAuth } from '../../src/lib/auth';
 import { useFeatures } from '../../src/lib/org';
 import { supabase } from '../../src/lib/supabase';
@@ -107,7 +108,7 @@ export default function StudentToday() {
       return;
     }
     await reload();
-    Alert.alert(
+    alert(
       'Checked in',
       attendanceMode === 'scan'
         ? 'Your driver and the transport office know you are waiting at the hub. Scan the code in the van when you get on.'

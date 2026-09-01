@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { alert } from '../../src/lib/alert';
 import { useAuth } from '../../src/lib/auth';
 import { useOrg, useToday } from '../../src/lib/org';
 import { supabase } from '../../src/lib/supabase';
@@ -80,7 +81,7 @@ export default function StudentClub() {
     }
 
     await load();
-    Alert.alert('Sent', 'If it is before the cutoff it applies straight away, otherwise the transport office will review it.');
+    alert('Sent', 'If it is before the cutoff it applies straight away, otherwise the transport office will review it.');
   }
 
   return (

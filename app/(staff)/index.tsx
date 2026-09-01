@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
-import { Alert, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+import { alert } from '../../src/lib/alert';
 import { useAuth } from '../../src/lib/auth';
 import { supabase } from '../../src/lib/supabase';
 import {
@@ -140,7 +141,7 @@ export default function StaffDashboard() {
 
     setTitle('');
     setBody('');
-    Alert.alert(
+    alert(
       'Sent',
       announceRoute
         ? `Announced to everyone riding ${ref.routeOf(announceRoute)?.name ?? 'that route'}, and its driver.`

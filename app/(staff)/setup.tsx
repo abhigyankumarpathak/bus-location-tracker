@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { alert } from '../../src/lib/alert';
 import { useFocusEffect } from 'expo-router';
 import { useAuth } from '../../src/lib/auth';
 import { useOrg } from '../../src/lib/org';
@@ -299,9 +300,12 @@ export default function StaffSetup() {
     await refreshAll();
   }
 
-  // No Alert.alert here: React Native Web does not implement it, so on the web
-  // build the confirm dialog never appeared and this delete never ran — "nothing
-  // happens". The Danger panel now confirms inline instead.
+  // Confirmed INLINE in the Danger panel rather than in a dialog. That began as
+  // a workaround — react-native-web's Alert.alert is an empty function, so the
+  // dialog never appeared and the delete never ran — and src/lib/alert.ts has
+  // since fixed that properly. This stays inline anyway: a panel that names the
+  // route and lists what goes with it is a better confirmation for a destructive
+  // action than a one-line browser prompt.
   async function deleteRoute(route: RouteTemplate) {
     setError('');
     const { error: e } = await supabase.from('route_templates').delete().eq('id', route.id);
@@ -381,7 +385,7 @@ export default function StaffSetup() {
     await refreshAll();
   }
 
-  // Same web caveat as deleteRoute: no Alert.alert. The stop row confirms inline.
+  // Confirmed inline on the stop row, for the same reason as deleteRoute.
   async function deleteStop(stop: RouteStop) {
     setError('');
     const { error: e } = await supabase.from('route_stops').delete().eq('id', stop.id);
@@ -504,7 +508,7 @@ export default function StaffSetup() {
     setFoundLabel('');
   }
 
-  // Same web caveat as deleteRoute/deleteStop: no Alert.alert. Confirmed inline.
+  // Confirmed inline, for the same reason as deleteRoute and deleteStop.
   async function deleteHub(hub: Hub) {
     setError('');
     const { error: e } = await supabase.from('hubs').delete().eq('id', hub.id);
@@ -602,7 +606,7 @@ export default function StaffSetup() {
 
     setWdSchedule(data as ScheduleStatus);
 
-    Alert.alert(
+    alert(
       enable ? 'Watchdog scheduled' : 'Watchdog stopped',
       enable
         ? 'It checks every five minutes during operating hours and raises anything nobody has reported — a route that never started, a van overdue at a stop, a child still waiting.'
@@ -673,7 +677,7 @@ export default function StaffSetup() {
     const status = data as ScheduleStatus;
     setSchedule(status);
 
-    Alert.alert(
+    alert(
       enable ? 'Weekly purge scheduled' : 'Weekly purge stopped',
       enable
         ? 'It will run every Sunday at 03:00 — archive each student’s week, send the report to their family, then clear the routine detail that has already been reported.'
@@ -713,7 +717,7 @@ export default function StaffSetup() {
     setLastRun(result);
 
     const deleted = Object.values(result.deleted ?? {}).reduce((a, b) => a + b, 0);
-    Alert.alert(
+    alert(
       'Maintenance complete',
       `${result.reports_generated ?? 0} weekly report(s) archived and sent.\n\n` +
         `${deleted} routine row(s) purged from before ${result.cutoff}.\n\n` +
@@ -1377,7 +1381,7 @@ export default function StaffSetup() {
                             variant="danger"
                             style={styles.grow}
                             onPress={() =>
-                              Alert.alert(
+                              alert(
                                 `Reissue the code for ${v.label}?`,
                                 'Every printed card in this van stops working immediately, and students cannot scan on until a new one is in place. Do this if a card has been photographed or shared.',
                                 [
@@ -1391,7 +1395,7 @@ export default function StaffSetup() {
                                       });
                                       if (e) return setError(e.message);
                                       await load();
-                                      Alert.alert(
+                                      alert(
                                         'Code reissued',
                                         `Print the new card and put it in ${v.label} before its next run.`,
                                       );
@@ -1812,7 +1816,7 @@ export default function StaffSetup() {
                 value={org?.attendance_only ?? false}
                 disabled={!isAdmin}
                 onValueChange={(v) =>
-                  Alert.alert(
+                  alert(
                     v ? 'Switch to attendance-only?' : 'Switch back to the full platform?',
                     v
                       ? 'Everyone sees a register instead of the transport app. Nothing is deleted — every route, trip and record stays exactly where it is and comes back the moment you switch this off.'
@@ -1892,7 +1896,7 @@ export default function StaffSetup() {
                             variant="danger"
                             style={styles.grow}
                             onPress={() =>
-                              Alert.alert(
+                              alert(
                                 'Reissue the attendance code?',
                                 'Every printed card stops working immediately and nobody can mark attendance until a new one is up. Do this if the code has been photographed or shared.',
                                 [
@@ -1904,7 +1908,7 @@ export default function StaffSetup() {
                                       const { error: e } = await supabase.rpc('rotate_attendance_code');
                                       if (e) return setError(e.message);
                                       await load();
-                                      Alert.alert('Code reissued', 'Print the new card before this evening.');
+                                      alert('Code reissued', 'Print the new card before this evening.');
                                     },
                                   },
                                 ],
