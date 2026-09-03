@@ -197,7 +197,42 @@ export interface Student {
   grade: string | null;
   morning_hub_id: string | null;
   afternoon_hub_id: string | null;
+  /** Cannot self-scan. Somebody else has to account for them. */
+  has_phone: boolean;
+  /** Confirms the phone-less riders dealt to them. */
+  is_monitor: boolean;
 }
+
+/** One rider a monitor has to account for this evening. */
+export interface MonitorRosterRow {
+  student_id: string;
+  student_name: string;
+  present: boolean;
+  marked_at: string | null;
+  source: AttendanceSource | null;
+}
+
+/** Staff view of who can scan and who answers for whom. */
+export interface RollRow {
+  student_id: string;
+  full_name: string;
+  has_phone: boolean;
+  is_monitor: boolean;
+  /** The monitor this rider is dealt to, or null. */
+  answers_to: string | null;
+}
+
+/**
+ * How a mark got there. Three different strengths of claim, deliberately never
+ * merged: the student scanned, the office said so, or another student did.
+ */
+export type AttendanceSource = 'scan' | 'staff' | 'monitor';
+
+export const SOURCE_LABEL: Record<AttendanceSource, string> = {
+  scan: 'Scanned',
+  staff: 'Marked by the office',
+  monitor: 'Confirmed by a bus monitor',
+};
 
 export interface Vehicle {
   id: string;
@@ -363,7 +398,7 @@ export interface Attendance {
   on_date: string;
   marked_at: string;
   /** A scan and a staff correction are different facts. Never merge them. */
-  source: 'scan' | 'staff';
+  source: AttendanceSource;
   marked_by: string | null;
   note: string | null;
 }
@@ -407,7 +442,7 @@ export interface RegisterRow {
   full_name: string;
   present: boolean;
   marked_at: string | null;
-  source: 'scan' | 'staff' | null;
+  source: AttendanceSource | null;
   note: string | null;
   /** Expected away, so they are out of the denominator rather than missing. */
   excused: boolean;

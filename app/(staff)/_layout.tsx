@@ -24,6 +24,19 @@ export default function StaffLayout() {
             : hidden
         }
       />
+      {/* Who can scan and who answers for them. Attendance-only mode is the
+          only place it means anything, so it shows only there. */}
+      <Tabs.Screen
+        name="roll"
+        options={
+          attendanceOnly
+            ? {
+                title: 'Riders',
+                tabBarIcon: ({ focused }) => <TabIcon glyph="🧑‍🤝‍🧑" focused={focused} />,
+              }
+            : hidden
+        }
+      />
       <Tabs.Screen
         name="index"
         options={

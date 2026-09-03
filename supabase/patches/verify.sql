@@ -105,7 +105,18 @@ with expected(kind, name, label) as (values
   ('body',   'attendance_register|excused',          'AWAY · register knows the denominator'),
   -- The one that would silently ruin the feature: a mark_attendance() that
   -- refuses an excused student keeps them off the record, not off the bus.
-  ('body',   'mark_attendance|marked_after_absence', 'AWAY · club cancelled, they ride anyway')
+  ('body',   'mark_attendance|marked_after_absence', 'AWAY · club cancelled, they ride anyway'),
+  -- Bus monitors (patch 9). The students who account for riders without phones.
+  ('column', 'students.has_phone',                   'MONITOR · who cannot self-scan'),
+  ('column', 'students.is_monitor',                  'MONITOR · who answers for them'),
+  ('func',   'monitor_assignments',                  'MONITOR · the round-robin split'),
+  ('func',   'my_monitor_roster',                    'MONITOR · what one monitor sees'),
+  ('func',   'monitor_mark',                         'MONITOR · confirming them aboard'),
+  ('func',   'attendance_roll',                      'MONITOR · the staff view'),
+  ('func',   'set_student_flags',                    'MONITOR · staff set both flags'),
+  -- A monitor asked about a child whose parents already said they are not
+  -- coming will either mark them wrongly present or report a false absence.
+  ('body',   'monitor_assignments|attendance_absence','MONITOR · excludes expected absences')
 )
 select
   case when found then '✅ OK  ' else '❌ MISSING' end as status,

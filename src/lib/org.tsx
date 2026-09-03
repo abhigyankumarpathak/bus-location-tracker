@@ -27,8 +27,15 @@ export function useOrg() {
 
 /** Convenience: the two blueprint-gated features, plus the attendance mode. */
 export function useFeatures() {
-  const { org } = useOrg();
+  const { org, loading } = useOrg();
   return {
+    /**
+     * The org row has not arrived yet, so every flag below is a DEFAULT rather
+     * than an answer. Anything that NAVIGATES on a flag must wait for this;
+     * a redirect fired on a default is permanent, because nothing re-navigates
+     * when the real value lands. See app/index.tsx.
+     */
+    featuresLoading: loading,
     gpsEnabled: org?.gps_enabled ?? false,
     paymentsEnabled: org?.payments_enabled ?? false,
     // 'manual' is the only mode actually built; 'scan' is reserved for NFC/QR
@@ -45,10 +52,11 @@ export function useFeatures() {
      * ATTENDANCE-ONLY MODE. Every screen that shows a route, a trip, a vehicle
      * or a check-in reads this and renders the register instead.
      *
-     * Defaults to FALSE when the org row has not loaded yet, which is the safe
-     * way round: a flicker of the full app is a cosmetic problem, whereas
-     * defaulting to true would blank a driver's roster mid-route on a slow
-     * connection.
+     * Defaults to FALSE before the org row arrives. That is the safe way round
+     * for RENDERING — defaulting to true would blank a driver's roster mid-route
+     * on a slow connection — but it is NOT safe for navigation, which is why
+     * `featuresLoading` exists. Redirecting on this default is what made the app
+     * open on the wrong screen until it was refreshed.
      */
     attendanceOnly: org?.attendance_only ?? false,
     /** "This is only for evenings." Wall clock in the operation's timezone. */
