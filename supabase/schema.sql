@@ -3718,6 +3718,10 @@ grant execute on function mark_attendance(text) to authenticated;
 -- ---------------------------------------------------------------------------
 -- The register, with a denominator that means something.
 -- ---------------------------------------------------------------------------
+-- Dropped first: the OUT columns changed when declared absences arrived, and
+-- Postgres refuses `create or replace` across a row-type change. Re-running this
+-- file over a database built from an earlier copy would otherwise fail here.
+drop function if exists attendance_register(date);
 create or replace function attendance_register(on_day date default null)
 returns table (
   student_id    uuid,

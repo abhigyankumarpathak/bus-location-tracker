@@ -324,6 +324,11 @@ grant execute on function mark_attendance(text) to authenticated;
 -- ---------------------------------------------------------------------------
 -- The register, with a denominator that means something.
 -- ---------------------------------------------------------------------------
+-- Dropped first, not replaced: this widens the OUT columns from six to ten, and
+-- Postgres refuses `create or replace` when the row type changes. Without the
+-- drop the patch dies halfway through, having already created the table.
+drop function if exists attendance_register(date);
+
 create or replace function attendance_register(on_day date default null)
 returns table (
   student_id    uuid,
