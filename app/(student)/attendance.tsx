@@ -13,6 +13,7 @@ import type {
   MonitorRosterRow,
 } from '../../src/lib/types';
 import { BoardingScanner } from '../../src/components/BoardingScanner';
+import { FamilyLinks } from '../../src/components/FamilyLinks';
 import type { ScanFeedback } from '../../src/components/BoardingScanner';
 import {
   Button,
@@ -396,6 +397,15 @@ export default function StudentAttendance() {
           </Card>
         </>
       ) : null}
+
+      {/*
+        LINKING A PARENT. This lives on the Profile tab normally, which this mode
+        hides — and the link policy requires the OTHER party to accept, so a
+        parent who proposed one had nobody able to say yes. The flow was
+        one-way-broken with no visible cause.
+      */}
+      <SectionLabel>Family</SectionLabel>
+      <FamilyLinks perspective="student" />
 
       {/*
         Attendance-only mode hides every other student tab, and Sign out lived on

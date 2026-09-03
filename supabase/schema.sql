@@ -3790,21 +3790,19 @@ language sql stable security definer set search_path = public as $$
            (row_number() over (order by p.full_name, p.id)) - 1 as idx,
            count(*) over () as total
     from profiles p
-    join students s on s.student_id = p.id
-    where p.role = 'student' and p.status = 'active' and s.is_monitor
+    left join students s on s.student_id = p.id
+    where p.role = 'student' and p.status = 'active'
+      and coalesce(s.is_monitor, false)
   ),
-  -- Phone-less, and NOT expected away. A monitor asked to account for a child
-  -- whose parents have already said they are not coming would either mark them
-  -- wrongly present or report a false absence; neither is worth their time.
   riders as (
     select p.id, p.full_name,
            (row_number() over (order by p.full_name, p.id)) - 1 as idx
     from profiles p
-    join students s on s.student_id = p.id
+    left join students s on s.student_id = p.id
     cross join d
     where p.role = 'student' and p.status = 'active'
-      and not s.has_phone
-      and not s.is_monitor
+      and not coalesce(s.has_phone, true)
+      and not coalesce(s.is_monitor, false)
       and not exists (
         select 1 from attendance_absence ab
         where ab.student_id = p.id
@@ -3822,10 +3820,7 @@ language sql stable security definer set search_path = public as $$
   order by m.full_name, r.full_name;
 $$;
 
-revoke execute on function monitor_assignments(date) from public, anon, authenticated;
-
-
--- What the calling monitor has to account for this evening.
+revoke execute on function monitor_assignments(date) from public, anon, authenticated;-- What the calling monitor has to account for this evening.
 create or replace function my_monitor_roster()
 returns table (
   student_id   uuid,
@@ -3907,15 +3902,19 @@ returns table (
   answers_to text
 )
 language sql stable security definer set search_path = public as $$
-  select p.id, p.full_name, s.has_phone, s.is_monitor, m.monitor_name
+  select p.id,
+         p.full_name,
+         coalesce(s.has_phone, true),
+         coalesce(s.is_monitor, false),
+         m.monitor_name
   from profiles p
-  join students s on s.student_id = p.id
+  left join students s on s.student_id = p.id
   left join lateral (
     select a.monitor_name from monitor_assignments(today_local()) a
     where a.student_id = p.id limit 1
   ) m on true
   where is_staff() and p.role = 'student' and p.status = 'active'
-  order by s.is_monitor desc, s.has_phone, p.full_name;
+  order by coalesce(s.is_monitor, false) desc, coalesce(s.has_phone, true), p.full_name;
 $$;
 
 revoke execute on function attendance_roll() from public, anon;
@@ -3925,9 +3924,9 @@ grant execute on function attendance_roll() to authenticated;
 -- Staff set both flags. Students do not choose whether they own a phone as far
 -- as this app is concerned, and certainly do not appoint themselves monitors.
 create or replace function set_student_flags(
-  target      uuid,
-  phone       boolean default null,
-  monitor     boolean default null
+  target  uuid,
+  phone   boolean default null,
+  monitor boolean default null
 ) returns jsonb
 language plpgsql security definer set search_path = public as $$
 begin
@@ -3935,14 +3934,18 @@ begin
     raise exception 'Only the office can change this.';
   end if;
 
-  update students
-  set has_phone  = coalesce(phone, has_phone),
-      is_monitor = coalesce(monitor, is_monitor)
-  where student_id = target;
-
-  if not found then
-    raise exception 'That student has no record to update.';
+  if not exists (select 1 from profiles where id = target and role = 'student') then
+    raise exception 'That account is not a student.';
   end if;
+
+  -- Creates the row when it is missing rather than failing. A student without
+  -- one is the case this patch exists for, and refusing to fix them would leave
+  -- the only route out a manual insert nobody would think to make.
+  insert into students (student_id, has_phone, is_monitor)
+  values (target, coalesce(phone, true), coalesce(monitor, false))
+  on conflict (student_id) do update
+    set has_phone  = coalesce(phone, students.has_phone),
+        is_monitor = coalesce(monitor, students.is_monitor);
 
   insert into audit_logs (entity_type, entity_id, action, new_value, changed_by)
   values ('students', target, 'flags_changed',
