@@ -116,7 +116,11 @@ with expected(kind, name, label) as (values
   ('func',   'set_student_flags',                    'MONITOR · staff set both flags'),
   -- A monitor asked about a child whose parents already said they are not
   -- coming will either mark them wrongly present or report a false absence.
-  ('body',   'monitor_assignments|attendance_absence','MONITOR · excludes expected absences')
+  ('body',   'monitor_assignments|attendance_absence','MONITOR · excludes expected absences'),
+  -- Roster riders (patch 9c): students who will never sign in.
+  ('func',   'staff_link_guardian',                  'ROSTER · office links the family'),
+  ('func',   'student_guardians',                    'ROSTER · who is already linked'),
+  ('func',   'all_parents',                          'ROSTER · the picker')
 )
 select
   case when found then '✅ OK  ' else '❌ MISSING' end as status,

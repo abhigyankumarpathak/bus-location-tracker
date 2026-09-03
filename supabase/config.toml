@@ -17,3 +17,10 @@ verify_jwt = true
 
 [functions.admin-delete-user]
 verify_jwt = true
+
+# Creates a roster record for a rider who has no phone and will never sign in.
+# Checks the caller's JWT is staff, then mints and redeems a single-use invite
+# server-side -- so handle_new_user() runs unchanged and there is no new way to
+# self-assign a role.
+[functions.admin-create-student]
+verify_jwt = true
