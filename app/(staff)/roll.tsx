@@ -104,11 +104,15 @@ export default function StaffRoll() {
   }
 
   async function openLink(row: RollRow) {
+    setError('');
     setLinkFor(row);
-    const [{ data: ps }, { data: gs }] = await Promise.all([
+    const [{ data: ps, error: pe }, { data: gs, error: ge }] = await Promise.all([
       supabase.rpc('all_parents'),
       supabase.rpc('student_guardians', { target: row.student_id }),
     ]);
+    // Was swallowed. A missing function then produced an empty panel with no
+    // explanation, which is indistinguishable from a family with no parents.
+    if (pe || ge) setError((pe ?? ge)!.message);
     setParents((ps as { id: string; full_name: string }[]) ?? []);
     setGuardians((gs as typeof guardians) ?? []);
   }
@@ -310,71 +314,6 @@ export default function StaffRoll() {
         </>
       ) : null}
 
-      {/* Linking a family, because these riders cannot be searched for. */}
-      {linkFor ? (
-        <>
-          <SectionLabel>Parents for {linkFor.full_name}</SectionLabel>
-          <Card>
-            {guardians.length > 0 ? (
-              guardians.map((g) => (
-                <Row key={g.parent_id} style={styles.between}>
-                  <Text style={styles.name}>
-                    {g.status === 'accepted' ? '✓' : '⏳'} {g.parent_name}
-                  </Text>
-                  <Row>
-                    {g.status !== 'accepted' ? (
-                      <Button
-                        label="Approve"
-                        variant="secondary"
-                        loading={busy === linkFor.student_id}
-                        onPress={() => approve(g.parent_id, linkFor.student_id)}
-                      />
-                    ) : null}
-                    {/* The undo for a link made in error. Links now accept
-                        themselves, so this is the only thing standing between a
-                        wrong pairing and a stranger reading a child's record. */}
-                    <Button
-                      label="Unlink"
-                      variant="danger"
-                      loading={busy === linkFor.student_id}
-                      onPress={() => unlink(g.parent_id, linkFor.student_id, g.parent_name)}
-                    />
-                  </Row>
-                </Row>
-              ))
-            ) : (
-              <Text style={styles.fine}>
-                Nobody linked yet. Their family cannot see whether they boarded until somebody is.
-              </Text>
-            )}
-            <Text style={styles.fine}>
-              This rider has a placeholder email, so a parent cannot find them by searching — the
-              office has to make the link.
-            </Text>
-            <Row style={styles.wrap}>
-              {parents
-                .filter(
-                  (p) =>
-                    // Only an ACCEPTED link removes a parent from the picker. A
-                    // pending one still needs settling, and filtering it out was
-                    // exactly what made a waiting link impossible to approve.
-                    !guardians.some((g) => g.parent_id === p.id && g.status === 'accepted'),
-                )
-                .map((p) => (
-                  <Button
-                    key={p.id}
-                    label={p.full_name}
-                    variant="secondary"
-                    loading={busy === linkFor.student_id}
-                    onPress={() => link(p.id)}
-                  />
-                ))}
-            </Row>
-            <Button label="Done" variant="ghost" onPress={() => setLinkFor(null)} />
-          </Card>
-        </>
-      ) : null}
-
       <Field
         label="Find a student"
         value={filter}
@@ -422,8 +361,102 @@ export default function StaffRoll() {
                 loading={busy === r.student_id}
                 onPress={() => setFlags(r, null, !r.is_monitor)}
               />
-              <Button label="Parents" variant="ghost" onPress={() => openLink(r)} />
             </Row>
+          ) : null}
+
+          {/* Outside the admin gate: staff_link_guardian() is is_staff(), and
+              linking a family is day-to-day office work. Only the two flags
+              above are an administrator's call. */}
+          <Button
+            label={linkFor?.student_id === r.student_id ? 'Hide parents' : 'Parents'}
+            variant="ghost"
+            onPress={() =>
+              linkFor?.student_id === r.student_id ? setLinkFor(null) : openLink(r)
+            }
+          />
+
+          {/*
+            The family panel, INSIDE this student's card.
+
+            It used to render near the top of the screen, about a hundred lines
+            above the button that opened it — so tapping Parents on anybody below
+            the fold scrolled nothing, showed nothing, and looked like a dead
+            button. Where a control's effect appears matters as much as whether
+            it works.
+          */}
+          {linkFor?.student_id === r.student_id ? (
+            <View style={styles.panel}>
+              {guardians.length > 0 ? (
+                guardians.map((g) => (
+                  <Row key={g.parent_id} style={styles.between}>
+                    <Text style={styles.name}>
+                      {g.status === 'accepted' ? '✓' : '⏳'} {g.parent_name}
+                    </Text>
+                    <Row style={styles.wrap}>
+                      {g.status !== 'accepted' ? (
+                        <Button
+                          label="Approve"
+                          variant="secondary"
+                          loading={busy === r.student_id}
+                          onPress={() => approve(g.parent_id, r.student_id)}
+                        />
+                      ) : null}
+                      {/* The undo for a link made in error. Links accept
+                          themselves now, so this is the only thing between a
+                          wrong pairing and a stranger reading a child's record. */}
+                      <Button
+                        label="Unlink"
+                        variant="danger"
+                        loading={busy === r.student_id}
+                        onPress={() => unlink(g.parent_id, r.student_id, g.parent_name)}
+                      />
+                    </Row>
+                  </Row>
+                ))
+              ) : (
+                <Text style={styles.fine}>
+                  Nobody linked yet. Their family cannot see whether they boarded until somebody
+                  is.
+                </Text>
+              )}
+
+              {!r.has_phone ? (
+                <Text style={styles.fine}>
+                  This rider has a placeholder email, so a parent cannot find them by searching —
+                  the office has to make the link.
+                </Text>
+              ) : null}
+
+              {parents.filter(
+                (pp) => !guardians.some((g) => g.parent_id === pp.id && g.status === 'accepted'),
+              ).length > 0 ? (
+                <>
+                  <Text style={styles.fine}>Link a parent:</Text>
+                  <Row style={styles.wrap}>
+                    {parents
+                      .filter(
+                        (pp) =>
+                          // Only an ACCEPTED link removes a parent from the
+                          // picker. A pending one still needs settling.
+                          !guardians.some(
+                            (g) => g.parent_id === pp.id && g.status === 'accepted',
+                          ),
+                      )
+                      .map((pp) => (
+                        <Button
+                          key={pp.id}
+                          label={pp.full_name}
+                          variant="secondary"
+                          loading={busy === r.student_id}
+                          onPress={() => link(pp.id)}
+                        />
+                      ))}
+                  </Row>
+                </>
+              ) : (
+                <Text style={styles.fine}>Every parent account is already linked.</Text>
+              )}
+            </View>
           ) : null}
 
           {isAdmin && r.is_monitor && !r.has_phone ? (
@@ -461,4 +494,5 @@ const styles = StyleSheet.create({
   alarm: { borderColor: theme.danger },
   monitorCard: { borderColor: theme.warn },
   pendingCard: { borderColor: theme.accent, gap: 8 },
+  panel: { gap: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: theme.border },
 });
