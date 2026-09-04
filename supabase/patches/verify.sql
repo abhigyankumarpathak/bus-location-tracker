@@ -120,7 +120,9 @@ with expected(kind, name, label) as (values
   -- Roster riders (patch 9c): students who will never sign in.
   ('func',   'staff_link_guardian',                  'ROSTER · office links the family'),
   ('func',   'student_guardians',                    'ROSTER · who is already linked'),
-  ('func',   'all_parents',                          'ROSTER · the picker')
+  ('func',   'all_parents',                          'ROSTER · the picker'),
+  ('func',   'pending_links',                        'LINK · what is waiting'),
+  ('func',   'reject_link',                          'LINK · turning one down')
 )
 select
   case when found then '✅ OK  ' else '❌ MISSING' end as status,

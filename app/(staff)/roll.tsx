@@ -49,13 +49,24 @@ export default function StaffRoll() {
   /** Linking a parent to one. */
   const [linkFor, setLinkFor] = useState<RollRow | null>(null);
   const [parents, setParents] = useState<{ id: string; full_name: string }[]>([]);
-  const [guardians, setGuardians] = useState<{ parent_id: string; parent_name: string }[]>([]);
+  const [guardians, setGuardians] = useState<
+    { parent_id: string; parent_name: string; status: string }[]
+  >([]);
+  /** Links a parent proposed that nobody has settled. */
+  const [pending, setPending] = useState<
+    { parent_id: string; parent_name: string; student_id: string; student_name: string; asked_by: string }[]
+  >([]);
 
   const reload = useCallback(async () => {
     const { data, error: e } = await supabase.rpc('attendance_roll');
     if (e) setError(e.message);
     setRows((data as RollRow[]) ?? []);
+
+    const { data: waiting } = await supabase.rpc('pending_links');
+    setPending((waiting as typeof pending) ?? []);
+
     setLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -99,7 +110,31 @@ export default function StaffRoll() {
       supabase.rpc('student_guardians', { target: row.student_id }),
     ]);
     setParents((ps as { id: string; full_name: string }[]) ?? []);
-    setGuardians((gs as { parent_id: string; parent_name: string }[]) ?? []);
+    setGuardians((gs as typeof guardians) ?? []);
+  }
+
+  /** Accept a link a parent proposed. Same call as making one outright. */
+  async function approve(parentId: string, studentId: string) {
+    setBusy(studentId);
+    const { error: e } = await supabase.rpc('staff_link_guardian', {
+      student: studentId,
+      parent: parentId,
+    });
+    setBusy(null);
+    if (e) return setError(e.message);
+    await reload();
+    if (linkFor) await openLink(linkFor);
+  }
+
+  async function reject(parentId: string, studentId: string) {
+    setBusy(studentId);
+    const { error: e } = await supabase.rpc('reject_link', {
+      parent: parentId,
+      student: studentId,
+    });
+    setBusy(null);
+    if (e) return setError(e.message);
+    await reload();
   }
 
   async function link(parentId: string) {
@@ -171,6 +206,58 @@ export default function StaffRoll() {
       ) : null}
 
       {/*
+        Links waiting on somebody. A parent's proposal sits `pending` until the
+        STUDENT accepts — the handshake that stops anyone attaching themselves to
+        a child. It assumes the student has an app, opens it, and understands
+        what they are agreeing to; for a rider the office created, all three are
+        false. So the office can settle it, which is a stronger authority than
+        the child's, not a weaker one.
+      */}
+      {pending.length > 0 ? (
+        <>
+          <SectionLabel>Waiting for approval ({pending.length})</SectionLabel>
+          {pending.map((l) => (
+            <Card key={`${l.parent_id}:${l.student_id}`} style={styles.pendingCard}>
+              <Text style={styles.name}>
+                {l.parent_name} → {l.student_name}
+              </Text>
+              <Text style={styles.fine}>
+                {l.asked_by === 'parent'
+                  ? `${l.parent_name} says they are ${l.student_name}'s parent. Nobody has confirmed it.`
+                  : `${l.student_name} asked to be linked to ${l.parent_name}.`}
+              </Text>
+              <Row style={styles.wrap}>
+                <Button
+                  label="Approve"
+                  loading={busy === l.student_id}
+                  onPress={() => approve(l.parent_id, l.student_id)}
+                />
+                <Button
+                  label="Refuse"
+                  variant="danger"
+                  loading={busy === l.student_id}
+                  onPress={() =>
+                    alert(
+                      `Refuse ${l.parent_name}?`,
+                      `They will not be able to see ${l.student_name}'s attendance. Only do this if you do not believe they are a parent of this child.`,
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                          text: 'Refuse',
+                          style: 'destructive',
+                          onPress: () => reject(l.parent_id, l.student_id),
+                        },
+                      ],
+                    )
+                  }
+                />
+              </Row>
+            </Card>
+          ))}
+        </>
+      ) : null}
+
+      {/*
         Adding a rider who will never sign in.
 
         Name only — no email to collect, no password to transmit, and nothing
@@ -205,9 +292,19 @@ export default function StaffRoll() {
           <Card>
             {guardians.length > 0 ? (
               guardians.map((g) => (
-                <Text key={g.parent_id} style={styles.name}>
-                  ✓ {g.parent_name}
-                </Text>
+                <Row key={g.parent_id} style={styles.between}>
+                  <Text style={styles.name}>
+                    {g.status === 'accepted' ? '✓' : '⏳'} {g.parent_name}
+                  </Text>
+                  {g.status !== 'accepted' ? (
+                    <Button
+                      label="Approve"
+                      variant="secondary"
+                      loading={busy === linkFor.student_id}
+                      onPress={() => approve(g.parent_id, linkFor.student_id)}
+                    />
+                  ) : null}
+                </Row>
               ))
             ) : (
               <Text style={styles.fine}>
@@ -220,7 +317,13 @@ export default function StaffRoll() {
             </Text>
             <Row style={styles.wrap}>
               {parents
-                .filter((p) => !guardians.some((g) => g.parent_id === p.id))
+                .filter(
+                  (p) =>
+                    // Only an ACCEPTED link removes a parent from the picker. A
+                    // pending one still needs settling, and filtering it out was
+                    // exactly what made a waiting link impossible to approve.
+                    !guardians.some((g) => g.parent_id === p.id && g.status === 'accepted'),
+                )
                 .map((p) => (
                   <Button
                     key={p.id}
@@ -321,4 +424,5 @@ const styles = StyleSheet.create({
   warn: { fontSize: 12, color: theme.warn, lineHeight: 17 },
   alarm: { borderColor: theme.danger },
   monitorCard: { borderColor: theme.warn },
+  pendingCard: { borderColor: theme.accent, gap: 8 },
 });
