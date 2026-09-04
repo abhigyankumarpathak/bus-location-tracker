@@ -122,7 +122,12 @@ with expected(kind, name, label) as (values
   ('func',   'student_guardians',                    'ROSTER · who is already linked'),
   ('func',   'all_parents',                          'ROSTER · the picker'),
   ('func',   'pending_links',                        'LINK · what is waiting'),
-  ('func',   'reject_link',                          'LINK · turning one down')
+  ('func',   'reject_link',                          'LINK · turning one down'),
+  -- Auto-accept (patch 9e). The trigger is the feature; the notification is
+  -- what keeps it survivable, so a missing one is not a cosmetic loss.
+  ('trigger','on_link_proposed',                     'LINK · accepted on insert'),
+  ('trigger','on_link_accepted',                     'LINK · student and office told'),
+  ('func',   'staff_unlink_guardian',                'LINK · the office can undo one')
 )
 select
   case when found then '✅ OK  ' else '❌ MISSING' end as status,

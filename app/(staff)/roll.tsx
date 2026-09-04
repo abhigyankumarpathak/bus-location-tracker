@@ -126,6 +126,31 @@ export default function StaffRoll() {
     if (linkFor) await openLink(linkFor);
   }
 
+  /** Undo a link somebody made by mistake. Either side can also do this. */
+  async function unlink(parentId: string, studentId: string, parentName: string) {
+    alert(
+      `Unlink ${parentName}?`,
+      'They will immediately stop seeing this student\u2019s attendance and history. The student and the office are not told, because you are the office \u2014 tell the family if they should know.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Unlink',
+          style: 'destructive',
+          onPress: async () => {
+            setBusy(studentId);
+            const { error: e } = await supabase.rpc('staff_unlink_guardian', {
+              student: studentId,
+              parent: parentId,
+            });
+            setBusy(null);
+            if (e) return setError(e.message);
+            if (linkFor) await openLink(linkFor);
+          },
+        },
+      ],
+    );
+  }
+
   async function reject(parentId: string, studentId: string) {
     setBusy(studentId);
     const { error: e } = await supabase.rpc('reject_link', {
@@ -296,14 +321,25 @@ export default function StaffRoll() {
                   <Text style={styles.name}>
                     {g.status === 'accepted' ? '✓' : '⏳'} {g.parent_name}
                   </Text>
-                  {g.status !== 'accepted' ? (
+                  <Row>
+                    {g.status !== 'accepted' ? (
+                      <Button
+                        label="Approve"
+                        variant="secondary"
+                        loading={busy === linkFor.student_id}
+                        onPress={() => approve(g.parent_id, linkFor.student_id)}
+                      />
+                    ) : null}
+                    {/* The undo for a link made in error. Links now accept
+                        themselves, so this is the only thing standing between a
+                        wrong pairing and a stranger reading a child's record. */}
                     <Button
-                      label="Approve"
-                      variant="secondary"
+                      label="Unlink"
+                      variant="danger"
                       loading={busy === linkFor.student_id}
-                      onPress={() => approve(g.parent_id, linkFor.student_id)}
+                      onPress={() => unlink(g.parent_id, linkFor.student_id, g.parent_name)}
                     />
-                  ) : null}
+                  </Row>
                 </Row>
               ))
             ) : (
