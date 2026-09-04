@@ -90,13 +90,13 @@ export function FamilyLinks({ perspective }: { perspective: 'student' | 'parent'
       if (insertError) {
         throw new Error(
           insertError.code === '23505'
-            ? `You are already linked to ${found.full_name}, or a request is pending.`
+            ? `You are already linked to ${found.full_name}.`
             : insertError.message,
         );
       }
 
       setContact('');
-      alert('Request sent', `${found.full_name} has to accept before you are linked.`);
+      alert('Linked', `You and ${found.full_name} are linked. They have been told, and either of you can undo it here.`);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not send the request.');
@@ -148,7 +148,8 @@ export function FamilyLinks({ perspective }: { perspective: 'student' | 'parent'
           placeholder="Their email or phone number"
         />
         <Text style={styles.hint}>
-          They must already have an approved account. They have to accept before the link is active.
+          They must already have an approved account. The link takes effect straight away, and both
+          of you can remove it.
         </Text>
         <ErrorText>{error}</ErrorText>
         <Button label="Send request" onPress={onAdd} loading={busy} disabled={!contact.trim()} />
@@ -190,16 +191,21 @@ export function FamilyLinks({ perspective }: { perspective: 'student' | 'parent'
         </Card>
       ))}
 
+      {/* Only reachable for a link made BEFORE links began accepting themselves,
+          or if the trigger is ever dropped. Worded for what it is rather than
+          for a wait that no longer happens. */}
       {outgoing.map((link) => (
         <Card key={link.id}>
           <Row style={styles.between}>
             <View style={styles.grow}>
               <Text style={styles.name}>{link.other?.full_name ?? 'Unknown'}</Text>
-              <Text style={styles.sub}>Waiting for them to accept.</Text>
+              <Text style={styles.sub}>
+                Not active yet. Ask the transport office to approve it.
+              </Text>
             </View>
-            <Badge label="Pending" tone="warn" />
+            <Badge label="Not active" tone="warn" />
           </Row>
-          <Button label="Cancel request" variant="danger" onPress={() => onRemove(link)} />
+          <Button label="Cancel" variant="danger" onPress={() => onRemove(link)} />
         </Card>
       ))}
     </>
