@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { alert } from '../../src/lib/alert';
+import { useAuth } from '../../src/lib/auth';
 import { useToday } from '../../src/lib/org';
 import { supabase } from '../../src/lib/supabase';
 import { ABSENCE_LABEL, registerCounts } from '../../src/lib/types';
@@ -33,6 +34,7 @@ import {
  * writes an audit entry like every other override in this app.
  */
 export default function StaffAttendance() {
+  const { signOut, lockStaff } = useAuth();
   const today = useToday();
   const [rows, setRows] = useState<RegisterRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -167,6 +169,17 @@ export default function StaffAttendance() {
         </>
       ) : null}
 
+      {/*
+        Sign out lives on the Dashboard, which attendance-only mode hides — so
+        the office had no way out of its own account. Same omission as the
+        student side, same fix.
+      */}
+      <SectionLabel>Account</SectionLabel>
+      <Row style={styles.wrap}>
+        <Button label="Lock the portal" variant="secondary" onPress={lockStaff} />
+        <Button label="Sign out" variant="ghost" onPress={signOut} />
+      </Row>
+
       {present.length > 0 ? (
         <>
           <SectionLabel>Marked ({present.length})</SectionLabel>
@@ -225,6 +238,7 @@ function Stat({ label, value, tone }: { label: string; value: string; tone: stri
 
 const styles = StyleSheet.create({
   between: { justifyContent: 'space-between' },
+  wrap: { flexWrap: 'wrap' },
   grow: { flex: 1 },
   stats: { gap: 0 },
   stat: { flex: 1, gap: 2 },

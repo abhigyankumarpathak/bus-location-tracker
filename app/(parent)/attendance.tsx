@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
+import { useAuth } from '../../src/lib/auth';
 import { useFeatures, useToday } from '../../src/lib/org';
 import { supabase } from '../../src/lib/supabase';
 import { useMyChildren } from '../../src/lib/hooks';
@@ -33,6 +34,7 @@ import {
  * option: nobody confirmed anything, there is no driver in this mode to do it.
  */
 export default function ParentAttendance() {
+  const { signOut } = useAuth();
   const { children, loading: childrenLoading } = useMyChildren();
   const { attendanceOpensAt } = useFeatures();
   const today = useToday();
@@ -225,6 +227,9 @@ export default function ParentAttendance() {
       })}
 
       <ErrorText>{error}</ErrorText>
+
+      <SectionLabel>Account</SectionLabel>
+      <Button label="Sign out" variant="secondary" onPress={signOut} />
 
       <SectionLabel>Tell the school about days off</SectionLabel>
       {forChild ? (
