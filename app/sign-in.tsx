@@ -61,23 +61,17 @@ export default function SignIn() {
           Social sign-in FIRST, because it is what most families will use, and
           the password form beneath it is the fallback rather than the default.
 
-          Apple is offered wherever Google is. App Store guideline 4.8 requires
-          Sign in with Apple in any iOS app that offers another provider's
-          sign-in, so on iOS this is not optional -- and it would be strange to
-          hide it everywhere else.
+          Google only for now. Sign in with Apple is wired in auth.tsx and the
+          button belongs here the moment the Apple Developer side is configured
+          -- App Store guideline 4.8 requires it in any iOS app offering another
+          provider. Until then a button that always errors is worse than no
+          button.
         */}
         <Card>
           <Button
             label="Continue with Google"
             onPress={() => onSocial('google')}
             loading={social === 'google'}
-            disabled={social !== null}
-          />
-          <Button
-            label="Continue with Apple"
-            variant="secondary"
-            onPress={() => onSocial('apple')}
-            loading={social === 'apple'}
             disabled={social !== null}
           />
           <Text style={styles.fine}>

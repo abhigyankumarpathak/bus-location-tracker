@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { alert } from '../../src/lib/alert';
 import { useAuth } from '../../src/lib/auth';
+import { SignInMethods } from '../../src/components/SignInMethods';
 import { useToday } from '../../src/lib/org';
 import { supabase } from '../../src/lib/supabase';
 import { ABSENCE_LABEL, registerCounts } from '../../src/lib/types';
@@ -179,6 +180,8 @@ export default function StaffAttendance() {
         <Button label="Lock the portal" variant="secondary" onPress={lockStaff} />
         <Button label="Sign out" variant="ghost" onPress={signOut} />
       </Row>
+
+      <SignInMethods />
 
       {present.length > 0 ? (
         <>

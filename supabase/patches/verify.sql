@@ -134,7 +134,10 @@ with expected(kind, name, label) as (values
   ('func',   'claim_invite',                         'SOCIAL · the second step'),
   -- A trigger that still raises on every social signup would make the Google
   -- button fail at the provider callback with an error nobody can act on.
-  ('body',   'handle_new_user|raw_app_meta_data',   'SOCIAL · trigger tolerates OAuth')
+  ('body',   'handle_new_user|raw_app_meta_data',   'SOCIAL · trigger tolerates OAuth'),
+  -- The typed name has to survive the trip to Google and back (patch 10b).
+  ('body',   'claim_invite|given_name',              'SOCIAL · claim carries the details'),
+  ('body',   'apply_invite|given_name',              'SOCIAL · and applies them')
 )
 select
   case when found then '✅ OK  ' else '❌ MISSING' end as status,

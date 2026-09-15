@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { PropsWithChildren } from 'react';
-import type { Session } from '@supabase/supabase-js';
+import type { Session, UserIdentity } from '@supabase/supabase-js';
 import { Platform } from 'react-native';
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
@@ -82,7 +82,14 @@ interface AuthValue {
    */
   signInWith(provider: SocialProvider): Promise<void>;
   /** Second step for a social sign-in: turn the invite into a profile and role. */
-  claimInvite(code: string): Promise<void>;
+  claimInvite(code: string, details?: { fullName?: string; phone?: string }): Promise<void>;
+  /** Sign-in methods attached to this account — password, Google, Apple. */
+  identities: UserIdentity[];
+  /** Attach a provider to the account already signed in. */
+  linkProvider(provider: SocialProvider): Promise<void>;
+  /** Detach one. Refused if it is the only way left in. */
+  unlinkProvider(identity: UserIdentity): Promise<void>;
+  refreshIdentities(): Promise<void>;
   signOut(): Promise<void>;
   refreshProfile(): Promise<void>;
   unlockStaff(password: string): Promise<void>;
@@ -111,6 +118,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [staffUnlocked, setStaffUnlocked] = useState(false);
+  const [identities, setIdentities] = useState<UserIdentity[]>([]);
   /** Signed in, but the account behind the session no longer exists. */
   const [profileMissing, setProfileMissing] = useState(false);
 
@@ -143,6 +151,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       if (!active) return;
       setSession(data.session);
       await loadProfile(data.session?.user.id);
+      setIdentities(data.session?.user.identities ?? []);
       if (active) setLoading(false);
     });
 
@@ -150,6 +159,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
       setSession(next);
       setStaffUnlocked(false);
       await loadProfile(next?.user.id);
+      // Identities travel with the session, and linking one fires this — so the
+      // list stays current without anybody asking it to.
+      setIdentities(next?.user.identities ?? []);
       setLoading(false);
     });
 
@@ -222,8 +234,12 @@ export function AuthProvider({ children }: PropsWithChildren) {
    * profile with the role the invite carries. Nobody picks their own role.
    */
   const claimInvite = useCallback<AuthValue['claimInvite']>(
-    async (code) => {
-      const { data, error } = await supabase.rpc('claim_invite', { code: code.trim() });
+    async (code, details) => {
+      const { data, error } = await supabase.rpc('claim_invite', {
+        code: code.trim(),
+        given_name: details?.fullName?.trim() || null,
+        given_phone: details?.phone?.trim() || null,
+      });
       if (error) throw error;
       const res = data as { ok: boolean; message?: string };
       if (!res?.ok) throw new Error(res?.message ?? 'That code did not work.');
@@ -251,6 +267,79 @@ export function AuthProvider({ children }: PropsWithChildren) {
       if (error) throw error;
     },
     [],
+  );
+
+  /**
+   * Which ways in this account has. Supabase calls them identities: one per
+   * provider, plus `email` for a password.
+   */
+  const refreshIdentities = useCallback(async () => {
+    const { data } = await supabase.auth.getUserIdentities();
+    setIdentities(data?.identities ?? []);
+  }, []);
+
+  /**
+   * Attach a provider to the account that is ALREADY signed in.
+   *
+   * Mostly this is not needed: Supabase links automatically when the provider
+   * hands back an email that matches an existing account and has been verified
+   * by the provider — so a parent who signed up as jo@gmail.com and then taps
+   * Continue with Google as jo@gmail.com keeps one account, and their children
+   * with it. Unverified emails are deliberately excluded from that, because
+   * "trust me, this is my address" is how accounts get taken over.
+   *
+   * This exists for the case automatic linking cannot cover: signed up with a
+   * school address, wants to sign in with a personal Gmail. Different emails,
+   * same person, and only the person already holding the session can say so.
+   *
+   * Needs "Manual linking" enabled in Supabase → Authentication → Providers.
+   */
+  const linkProvider = useCallback<AuthValue['linkProvider']>(
+    async (provider) => {
+      const { data, error } = await supabase.auth.linkIdentity({
+        provider,
+        options: {
+          redirectTo: redirectTo(),
+          skipBrowserRedirect: Platform.OS !== 'web',
+        },
+      });
+      if (error) throw error;
+      if (Platform.OS === 'web') return; // the page is navigating away
+
+      if (!data?.url) throw new Error('The sign-in page could not be opened.');
+
+      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo());
+      if (result.type !== 'success') return;
+
+      const code = new URL(result.url).searchParams.get('code');
+      if (!code) throw new Error('The provider did not return a sign-in code.');
+
+      const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+      if (exchangeError) throw exchangeError;
+      await refreshIdentities();
+    },
+    [refreshIdentities],
+  );
+
+  /**
+   * Detach one — refused if it is the last.
+   *
+   * Supabase refuses this server-side too, but an error after the tap is a
+   * worse answer than a button that explains itself. Removing the only way into
+   * an account is not something to discover afterwards.
+   */
+  const unlinkProvider = useCallback<AuthValue['unlinkProvider']>(
+    async (identity) => {
+      if (identities.length <= 1) {
+        throw new Error(
+          'This is the only way into your account. Add another sign-in method first.',
+        );
+      }
+      const { error } = await supabase.auth.unlinkIdentity(identity);
+      if (error) throw error;
+      await refreshIdentities();
+    },
+    [identities.length, refreshIdentities],
   );
 
   const signOut = useCallback(async () => {
@@ -293,6 +382,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
       signIn,
       signInWith,
       claimInvite,
+      identities,
+      linkProvider,
+      unlinkProvider,
+      refreshIdentities,
       signUp,
       signOut,
       refreshProfile,
@@ -309,6 +402,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
       signIn,
       signInWith,
       claimInvite,
+      identities,
+      linkProvider,
+      unlinkProvider,
+      refreshIdentities,
       signUp,
       signOut,
       refreshProfile,

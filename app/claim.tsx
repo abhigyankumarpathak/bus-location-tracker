@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { KeyboardAvoidingView, Platform, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../src/lib/auth';
+import { clearSignup, readSignup } from '../src/lib/pending-signup';
 import { Button, Card, ErrorText, Field, Screen, Title, theme } from '../src/components/ui';
 
 /**
@@ -23,6 +24,36 @@ export default function ClaimInvite() {
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const tried = useRef(false);
+
+  /**
+   * Somebody who came here from sign-up already typed all of this before Google
+   * took the page away. Apply it rather than asking again — being made to
+   * re-enter a code you just entered reads as the app having lost your place,
+   * which is exactly what happened and exactly what should not show.
+   *
+   * Runs once. A stash that fails (expired invite, wrong Google account) falls
+   * through to the form below with the reason, and is cleared so the failure
+   * cannot repeat on every render.
+   */
+  useEffect(() => {
+    if (tried.current) return;
+    tried.current = true;
+
+    const pending = readSignup();
+    if (!pending) return;
+
+    setCode(pending.code);
+    setBusy(true);
+    claimInvite(pending.code, { fullName: pending.fullName, phone: pending.phone })
+      .then(clearSignup)
+      .catch((e: unknown) => {
+        clearSignup();
+        setError(e instanceof Error ? e.message : 'That code did not work.');
+      })
+      .finally(() => setBusy(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function onSubmit() {
     setError('');

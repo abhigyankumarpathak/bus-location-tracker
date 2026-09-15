@@ -1113,7 +1113,15 @@ revoke execute on function validate_invite(text, text) from public, anon, authen
 
 -- What happens once an invite is good: the profile, the role, the student row,
 -- the used-up invite, and the office told. Shared by both doors.
-create or replace function apply_invite(inv invites, user_id uuid, user_email text, user_phone text)
+create or replace function apply_invite(
+  inv        invites,
+  user_id    uuid,
+  user_email text,
+  user_phone text,
+  -- What they typed on the way through, if anything. The invite's own name wins
+  -- when they typed nothing, and the email stub is the last resort.
+  given_name text default null
+)
 returns void
 language plpgsql security definer set search_path = public as $$
 begin
@@ -1121,7 +1129,11 @@ begin
   values (
     user_id,
     inv.role,                                   -- from the invite. Not negotiable.
-    coalesce(nullif(inv.full_name, ''), split_part(coalesce(user_email, ''), '@', 1)),
+    coalesce(
+      nullif(btrim(given_name), ''),
+      nullif(inv.full_name, ''),
+      split_part(coalesce(user_email, ''), '@', 1)
+    ),
     user_email,
     user_phone,
     'active'
@@ -1136,16 +1148,15 @@ begin
 
   insert into notifications (user_id, title, body, kind)
   select p.id, 'New account',
-         coalesce(nullif(inv.full_name, ''), user_email) || ' has joined as a ' || inv.role || '.',
+         coalesce(nullif(btrim(given_name), ''), nullif(inv.full_name, ''), user_email)
+           || ' has joined as a ' || inv.role || '.',
          'account'
   from profiles p where p.role in ('coordinator', 'admin') and p.status = 'active';
 end;
 $$;
 
-revoke execute on function apply_invite(invites, uuid, text, text) from public, anon, authenticated;
-
-
--- ---------------------------------------------------------------------------
+revoke execute on function apply_invite(invites, uuid, text, text, text)
+  from public, anon, authenticated;-- ---------------------------------------------------------------------------
 -- The trigger. Unchanged for a password signup; tolerant of a social one.
 -- ---------------------------------------------------------------------------
 create or replace function handle_new_user() returns trigger
@@ -1153,28 +1164,23 @@ language plpgsql security definer set search_path = public as $$
 declare
   supplied text := upper(trim(coalesce(new.raw_user_meta_data ->> 'invite_code', '')));
   provider text := coalesce(new.raw_app_meta_data ->> 'provider', 'email');
+  given    text := nullif(btrim(coalesce(new.raw_user_meta_data ->> 'full_name', '')), '');
   inv invites%rowtype;
 begin
   if supplied = '' then
-    -- A PASSWORD signup with no code is somebody bypassing the sign-up screen.
-    -- Refuse it, exactly as before.
     if provider = 'email' then
       raise exception 'An invite code is required. Ask the transport office to invite you.';
     end if;
-    -- A SOCIAL signup has nowhere to have carried a code. Let the auth user
-    -- exist with no profile: it can read nothing, and app/index.tsx sends it
-    -- to the claim screen. claim_invite() finishes the job.
+    -- A social signup carries no code. The account exists with no profile, can
+    -- read nothing, and app/claim.tsx finishes the job.
     return new;
   end if;
 
   inv := validate_invite(supplied, new.email);
-  perform apply_invite(inv, new.id, new.email, new.phone);
+  perform apply_invite(inv, new.id, new.email, new.phone, given);
   return new;
 end;
-$$;
-
-
-drop trigger if exists on_auth_user_created on auth.users;
+$$;drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created after insert on auth.users
   for each row execute function handle_new_user();
 
@@ -1185,12 +1191,16 @@ create trigger on_auth_user_created after insert on auth.users
 -- a sign-in screen with a code somebody read out to them, and "check
 -- constraint violated" helps nobody.
 -- ---------------------------------------------------------------------------
-create or replace function claim_invite(code text) returns jsonb
+create or replace function claim_invite(
+  code       text,
+  given_name text default null,
+  given_phone text default null
+) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
-  me    uuid := auth.uid();
-  u     record;
-  inv   invites%rowtype;
+  me  uuid := auth.uid();
+  u   record;
+  inv invites%rowtype;
 begin
   if me is null then
     return jsonb_build_object('ok', false, 'message', 'Sign in first.');
@@ -1208,14 +1218,14 @@ begin
     return jsonb_build_object('ok', false, 'message', sqlerrm);
   end;
 
-  perform apply_invite(inv, me, u.email, u.phone);
+  perform apply_invite(inv, me, u.email, coalesce(nullif(btrim(given_phone), ''), u.phone), given_name);
 
   return jsonb_build_object('ok', true, 'role', inv.role);
 end;
 $$;
 
-revoke execute on function claim_invite(text) from public, anon;
-grant execute on function claim_invite(text) to authenticated;
+revoke execute on function claim_invite(text, text, text) from public, anon;
+grant execute on function claim_invite(text, text, text) to authenticated;
 
 -- Nobody may change their own role or status. Without this, the "update own
 -- profile" policy would let a pending user approve themselves.

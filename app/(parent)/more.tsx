@@ -12,6 +12,7 @@ import {
 } from '../../src/lib/types';
 import type { DailyTrip, StudentTripStatus } from '../../src/lib/types';
 import { FamilyLinks } from '../../src/components/FamilyLinks';
+import { SignInMethods } from '../../src/components/SignInMethods';
 import { StudentAssignment } from '../../src/components/StudentAssignment';
 import { WeeklyReports } from '../../src/components/WeeklyReports';
 import { PaymentsLocked } from '../../src/components/Disabled';
@@ -70,6 +71,8 @@ export default function ParentMore() {
 
       <SectionLabel>Family</SectionLabel>
       <FamilyLinks perspective="parent" />
+
+      <SignInMethods />
 
       {children.length > 0 ? (
         <>

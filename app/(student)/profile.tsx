@@ -8,6 +8,7 @@ import { useNotifications, useReference } from '../../src/lib/hooks';
 import type { Student } from '../../src/lib/types';
 import { PaymentsLocked } from '../../src/components/Disabled';
 import { FamilyLinks } from '../../src/components/FamilyLinks';
+import { SignInMethods } from '../../src/components/SignInMethods';
 import {
   Badge,
   Button,
@@ -82,6 +83,8 @@ export default function StudentProfile() {
           watching a request that could never go through. */}
       <SectionLabel>Parents</SectionLabel>
       <FamilyLinks perspective="student" />
+
+      <SignInMethods />
 
       <Row style={styles.between}>
         <SectionLabel>Notifications</SectionLabel>

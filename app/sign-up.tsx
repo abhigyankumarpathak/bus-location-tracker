@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { lookupInvite, useAuth } from '../src/lib/auth';
+import { stashSignup } from '../src/lib/pending-signup';
 import type { InviteDetails } from '../src/lib/auth';
 import { Badge, Button, Card, ErrorText, Field, Screen, Title, theme } from '../src/components/ui';
 
@@ -25,7 +26,7 @@ const ROLE_BLURB: Record<string, string> = {
 };
 
 export default function SignUp() {
-  const { signUp } = useAuth();
+  const { signUp, signInWith } = useAuth();
 
   const [code, setCode] = useState('');
   const [invite, setInvite] = useState<InviteDetails | null>(null);
@@ -38,6 +39,7 @@ export default function SignUp() {
 
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [google, setGoogle] = useState(false);
   const [done, setDone] = useState(false);
 
   async function check() {
@@ -58,6 +60,27 @@ export default function SignUp() {
       setError(e instanceof Error ? e.message : 'Could not check that code.');
     } finally {
       setChecking(false);
+    }
+  }
+
+  /**
+   * Finish with Google instead of a password.
+   *
+   * The code and the details are stashed FIRST, because on web the next line
+   * navigates the page away and takes React state with it. They come back
+   * holding a session and no profile, and app/claim.tsx applies the stash
+   * without making them type any of it twice.
+   */
+  async function onGoogle() {
+    setError('');
+    stashSignup({ code: code.trim(), fullName: fullName.trim(), phone: phone.trim() });
+    setGoogle(true);
+    try {
+      await signInWith('google');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not open Google sign-in.');
+    } finally {
+      setGoogle(false);
     }
   }
 
@@ -93,8 +116,9 @@ export default function SignUp() {
 
   // An email-locked invite must be redeemed by that address, so don't let them edit it.
   const emailLocked = Boolean(invite?.email);
-  const canSubmit =
-    !!invite && fullName.trim().length > 1 && email.includes('@') && password.length >= 6;
+  // Google needs everything EXCEPT a password — that is the point of it.
+  const canFinish = !!invite && fullName.trim().length > 1;
+  const canSubmit = canFinish && email.includes('@') && password.length >= 6;
 
   return (
     <Screen>
@@ -178,6 +202,27 @@ export default function SignUp() {
               autoComplete="tel"
               placeholder="(555) 010-0100"
             />
+            <ErrorText>{error}</ErrorText>
+
+            {/*
+              Google FIRST, and the password below it. Most people should take
+              the top one — nothing to remember, and recovery becomes Google's
+              rather than an office running a database command. The password is
+              here because not everybody has a Google account, and locking those
+              families out to save a button is not a trade worth making.
+            */}
+            <Button
+              label="Finish with Google"
+              onPress={onGoogle}
+              loading={google}
+              disabled={!canFinish || busy}
+            />
+            <Text style={styles.hint}>
+              No password to remember. You will pick your Google account and come straight back.
+            </Text>
+
+            <Text style={styles.or}>or set a password</Text>
+
             <Field
               label="Password"
               value={password}
@@ -190,13 +235,12 @@ export default function SignUp() {
               placeholder="At least 6 characters"
             />
 
-            <ErrorText>{error}</ErrorText>
-
             <Button
               label={`Create ${invite.role} account`}
+              variant="secondary"
               onPress={onSubmit}
               loading={busy}
-              disabled={!canSubmit}
+              disabled={!canSubmit || google}
             />
           </Card>
         ) : null}
@@ -210,6 +254,7 @@ export default function SignUp() {
 const styles = StyleSheet.create({
   code: { fontSize: 20, letterSpacing: 2, fontWeight: '700' },
   hint: { fontSize: 12, color: theme.faint, lineHeight: 17 },
+  or: { fontSize: 12, color: theme.faint, textAlign: 'center', marginTop: 4 },
   confirmed: {
     flexDirection: 'row',
     alignItems: 'center',

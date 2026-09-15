@@ -14,6 +14,7 @@ import type {
 } from '../../src/lib/types';
 import { BoardingScanner } from '../../src/components/BoardingScanner';
 import { FamilyLinks } from '../../src/components/FamilyLinks';
+import { SignInMethods } from '../../src/components/SignInMethods';
 import type { ScanFeedback } from '../../src/components/BoardingScanner';
 import {
   Button,
@@ -406,6 +407,8 @@ export default function StudentAttendance() {
       */}
       <SectionLabel>Family</SectionLabel>
       <FamilyLinks perspective="student" />
+
+      <SignInMethods />
 
       {/*
         Attendance-only mode hides every other student tab, and Sign out lived on
