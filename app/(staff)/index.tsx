@@ -11,6 +11,7 @@ import {
   useTripStatuses,
 } from '../../src/lib/hooks';
 import { useToday } from '../../src/lib/org';
+import { SignInMethods } from '../../src/components/SignInMethods';
 import {
   RIDER_STATUS_LABEL,
   RIDER_STATUS_TONE,
@@ -479,6 +480,11 @@ export default function StaffDashboard() {
           disabled={!title.trim() || !body.trim()}
         />
       </Card>
+
+      {/* Staff manage their own sign-in here, the same as everyone else does on
+          their own screens. The attendance screen carries a copy because this
+          Dashboard is hidden in attendance-only mode. */}
+      <SignInMethods />
 
       <Row>
         <Button label="Lock portal" variant="secondary" onPress={lockStaff} style={styles.grow} />
