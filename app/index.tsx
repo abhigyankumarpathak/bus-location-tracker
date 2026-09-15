@@ -4,11 +4,18 @@ import { useFeatures } from '../src/lib/org';
 import { Loading } from '../src/components/ui';
 
 export default function Index() {
-  const { session, profile, loading, staffUnlocked, isStaff } = useAuth();
+  const { session, profile, loading, staffUnlocked, isStaff, profileMissing } = useAuth();
   const { attendanceOnly, featuresLoading } = useFeatures();
 
-  if (loading || (session && !profile)) return <Loading />;
-  if (!session || !profile) return <Redirect href="/sign-in" />;
+  if (loading) return <Loading />;
+  if (!session) return <Redirect href="/sign-in" />;
+
+  // Signed in, no profile behind it. Two ways to get here: a social sign-in
+  // whose invite has not been claimed yet (the normal case now), or an account
+  // whose profile was deleted underneath a stored session. The claim screen
+  // handles the first and offers sign-out for the second -- before this it was
+  // a spinner forever.
+  if (!profile) return profileMissing ? <Redirect href="/claim" /> : <Loading />;
 
   // Pending and suspended both land here — neither can use the app.
   if (profile.status !== 'active') return <Redirect href="/pending" />;

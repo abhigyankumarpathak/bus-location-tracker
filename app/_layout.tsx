@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Platform, Text, View } from 'react-native';
+import { Platform } from 'react-native';
 import { Stack, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -10,7 +10,7 @@ import { isConfigured } from '../src/lib/supabase';
 import * as Notifications from 'expo-notifications';
 import { registerForPush } from '../src/lib/push';
 import { SetupNeeded } from '../src/components/SetupNeeded';
-import { Button, Card, Loading, Screen, Title, theme } from '../src/components/ui';
+import { Loading, theme } from '../src/components/ui';
 
 /**
  * Role-based navigation (blueprint §1.1).
@@ -26,7 +26,7 @@ import { Button, Card, Loading, Screen, Title, theme } from '../src/components/u
  * exists is the waiting screen.
  */
 function RootNavigator() {
-  const { session, profile, loading, staffUnlocked, isStaff, profileMissing, signOut } = useAuth();
+  const { session, profile, loading, staffUnlocked, isStaff, profileMissing } = useAuth();
 
   useEffect(() => {
     if (session?.user.id && profile?.status === 'active') {
@@ -70,14 +70,13 @@ function RootNavigator() {
     return () => sub.remove();
   }, [profile?.role]);
 
-  // A stored session whose account no longer exists — deleted by an admin, or
-  // left behind by a schema rebuild. Without this the app sits on a spinner
-  // forever with no way out but deleting it.
-  if (!loading && session && profileMissing) {
-    return <OrphanedSession onSignOut={signOut} />;
-  }
-
-  if (loading || (session && !profile)) return <Loading />;
+  // A session with no profile behind it is no longer a dead end. It is now the
+  // NORMAL state after a social sign-in: Google vouched for the person, and the
+  // invite that decides their role has not been claimed yet. The claim screen
+  // below handles that, and still offers sign-out for the other case — an
+  // account deleted underneath a stored session — which used to get a spinner
+  // forever and then, briefly, a dedicated card. One screen covers both.
+  if (loading || (session && !profile && !profileMissing)) return <Loading />;
 
   const role = profile?.role;
   const active = profile?.status === 'active';
@@ -95,7 +94,13 @@ function RootNavigator() {
         <Stack.Screen name="sign-up" options={{ title: 'Create account' }} />
       </Stack.Protected>
 
-      <Stack.Protected guard={!!session && profile?.status !== 'active'}>
+      {/* Signed in, no profile: claim the invite. The only route that exists
+          until it is claimed, so RLS-empty screens are never even mounted. */}
+      <Stack.Protected guard={!!session && profileMissing}>
+        <Stack.Screen name="claim" options={{ headerShown: false }} />
+      </Stack.Protected>
+
+      <Stack.Protected guard={!!session && !!profile && profile.status !== 'active'}>
         <Stack.Screen name="pending" options={{ headerShown: false }} />
       </Stack.Protected>
 
@@ -122,27 +127,6 @@ function RootNavigator() {
         <Stack.Screen name="(staff)" options={{ headerShown: false }} />
       </Stack.Protected>
     </Stack>
-  );
-}
-
-function OrphanedSession({ onSignOut }: { onSignOut: () => void }) {
-  return (
-    <Screen>
-      <View style={{ alignItems: 'center', gap: 8, paddingVertical: 40 }}>
-        <Text style={{ fontSize: 52 }}>🔑</Text>
-        <Title sub="You are signed in, but the account behind this session no longer exists.">
-          Session out of date
-        </Title>
-      </View>
-      <Card>
-        <Text style={{ color: theme.muted, fontSize: 14, lineHeight: 21 }}>
-          This usually means an administrator removed the account, or the database was rebuilt
-          while you were signed in. Sign out and sign in again — you will need an invite code if the
-          account is really gone.
-        </Text>
-      </Card>
-      <Button label="Sign out" onPress={onSignOut} />
-    </Screen>
   );
 }
 

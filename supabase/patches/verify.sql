@@ -127,7 +127,14 @@ with expected(kind, name, label) as (values
   -- what keeps it survivable, so a missing one is not a cosmetic loss.
   ('trigger','on_link_proposed',                     'LINK · accepted on insert'),
   ('trigger','on_link_accepted',                     'LINK · student and office told'),
-  ('func',   'staff_unlink_guardian',                'LINK · the office can undo one')
+  ('func',   'staff_unlink_guardian',                'LINK · the office can undo one'),
+  -- Social sign-in (patch 10). The invite is still the only source of a role.
+  ('func',   'validate_invite',                      'SOCIAL · one set of invite checks'),
+  ('func',   'apply_invite',                         'SOCIAL · one way to apply one'),
+  ('func',   'claim_invite',                         'SOCIAL · the second step'),
+  -- A trigger that still raises on every social signup would make the Google
+  -- button fail at the provider callback with an error nobody can act on.
+  ('body',   'handle_new_user|raw_app_meta_data',   'SOCIAL · trigger tolerates OAuth')
 )
 select
   case when found then '✅ OK  ' else '❌ MISSING' end as status,

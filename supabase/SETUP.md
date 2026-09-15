@@ -122,6 +122,59 @@ automatically — you do not set those.
 
 Without `admin-unlock` deployed, the staff portal cannot be opened at all.
 
+## 6b. Social sign-in (Google, Apple)
+
+Families can sign in with Google or Apple instead of a password. **The invite
+is still required** — a social account with no invite lands on a screen asking
+for one, and can read nothing until it is claimed. The provider replaces the
+password, not the invitation.
+
+### Google
+
+1. [Google Cloud Console](https://console.cloud.google.com/apis/credentials) →
+   **Create Credentials → OAuth client ID → Web application**.
+2. Authorised redirect URI — exactly this, nothing else:
+   ```
+   https://<your-project-ref>.supabase.co/auth/v1/callback
+   ```
+3. Copy the client ID and secret into Supabase → **Authentication → Providers
+   → Google**, and enable it.
+
+### Apple
+
+Required on iOS if Google is offered — App Store guideline 4.8. Needs a paid
+Apple Developer account.
+
+1. [developer.apple.com](https://developer.apple.com/account/resources/identifiers)
+   → **Identifiers → Services IDs** → create one. Enable *Sign in with Apple*,
+   set the return URL to the same `/auth/v1/callback` address as above.
+2. **Keys** → create a key with *Sign in with Apple* enabled. Download the
+   `.p8` — you get exactly one chance.
+3. Supabase → **Authentication → Providers → Apple**: the Services ID, your
+   Team ID, the Key ID, and the contents of the `.p8`.
+
+### Redirect URLs — the step everyone misses
+
+Supabase → **Authentication → URL Configuration**:
+
+| Field | Value |
+| --- | --- |
+| Site URL | Your Render URL, e.g. `https://bus-location-tracker.onrender.com` |
+| Redirect URLs | The Render URL again, **plus** `bustracker://auth` for the phone app |
+
+Without the second entry a phone sign-in completes at Google and then fails
+silently on the way back, because Supabase refuses to redirect to a scheme it
+was not told about. Without the first, the web build does the same.
+
+### How it works, so it can be debugged
+
+The app uses the PKCE flow (`src/lib/supabase.ts`). On web the provider sends
+the browser back with `?code=` and supabase-js exchanges it. On the phone the
+in-app browser hands the `bustracker://auth?code=` redirect back as a string and
+`src/lib/auth.tsx` exchanges it by hand. A new social account arrives with no
+profile; `handle_new_user()` lets it exist, `app/claim.tsx` asks for the invite,
+and `claim_invite()` applies the same checks a password signup gets.
+
 ## 7. Push notifications — **required, not optional**
 
 Nobody watches the coordinator dashboard during a run (confirmed 12 August), so

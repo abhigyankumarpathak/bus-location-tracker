@@ -1,6 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { PropsWithChildren } from 'react';
 import type { Session } from '@supabase/supabase-js';
+import { Platform } from 'react-native';
+import * as Linking from 'expo-linking';
+import * as WebBrowser from 'expo-web-browser';
 import { supabase } from './supabase';
 import type { Profile, Role } from './types';
 
@@ -38,6 +41,23 @@ export async function lookupInvite(code: string): Promise<InviteDetails> {
   );
 }
 
+export type SocialProvider = 'google' | 'apple';
+
+/**
+ * Where the provider sends the browser back to.
+ *
+ * On web that is this site, and supabase-js notices the ?code= in the URL
+ * itself (detectSessionInUrl). On native it is the app's own scheme, which the
+ * in-app browser hands back to us as a string -- no page ever loads at it -- and
+ * we exchange the code by hand below. Both must be listed under Supabase ->
+ * Auth -> URL Configuration -> Redirect URLs, or the provider is told to send
+ * the user somewhere Supabase refuses to honour.
+ */
+const redirectTo = () =>
+  Platform.OS === 'web' && typeof window !== 'undefined'
+    ? `${window.location.origin}/`
+    : Linking.createURL('/auth');
+
 interface AuthValue {
   session: Session | null;
   profile: Profile | null;
@@ -56,6 +76,13 @@ interface AuthValue {
     phone: string;
     inviteCode: string;
   }): Promise<void>;
+  /**
+   * Sign in through a provider. Creates the auth user on first use; the PROFILE
+   * still has to be claimed with an invite code afterwards — see claimInvite.
+   */
+  signInWith(provider: SocialProvider): Promise<void>;
+  /** Second step for a social sign-in: turn the invite into a profile and role. */
+  claimInvite(code: string): Promise<void>;
   signOut(): Promise<void>;
   refreshProfile(): Promise<void>;
   unlockStaff(password: string): Promise<void>;
@@ -145,6 +172,66 @@ export function AuthProvider({ children }: PropsWithChildren) {
     if (error) throw error;
   }, []);
 
+  /**
+   * Social sign-in, on both platforms.
+   *
+   * WEB is the easy half: supabase-js redirects the whole page to the provider,
+   * the provider sends it back here with ?code=, and detectSessionInUrl
+   * exchanges it. Nothing below the first call runs, because the page is gone.
+   *
+   * NATIVE cannot redirect a page it does not have. So the URL is fetched but
+   * not followed (skipBrowserRedirect), opened in the system's auth browser --
+   * which shares the user's existing Google session, so they usually just tap
+   * their name -- and the redirect back to bustracker://auth is captured as a
+   * string. The ?code= in it is exchanged by hand. PKCE makes that safe: the
+   * code is single-use and bound to a verifier only this install holds.
+   */
+  const signInWith = useCallback<AuthValue['signInWith']>(async (provider) => {
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: {
+        redirectTo: redirectTo(),
+        skipBrowserRedirect: Platform.OS !== 'web',
+      },
+    });
+    if (error) throw error;
+    if (Platform.OS === 'web') return; // the page is navigating away
+
+    if (!data.url) throw new Error('The sign-in page could not be opened.');
+
+    const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo());
+    if (result.type !== 'success') {
+      // Cancelled or dismissed. Not an error worth a red banner; the person
+      // simply closed it.
+      return;
+    }
+
+    const code = new URL(result.url).searchParams.get('code');
+    if (!code) throw new Error('The provider did not return a sign-in code.');
+
+    const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+    if (exchangeError) throw exchangeError;
+  }, []);
+
+  /**
+   * The second step of a social sign-in.
+   *
+   * The account exists in Supabase Auth but has no profile, so it has no role
+   * and RLS lets it read nothing. claim_invite() checks the code exactly as a
+   * password signup would have -- same function, same rules -- and creates the
+   * profile with the role the invite carries. Nobody picks their own role.
+   */
+  const claimInvite = useCallback<AuthValue['claimInvite']>(
+    async (code) => {
+      const { data, error } = await supabase.rpc('claim_invite', { code: code.trim() });
+      if (error) throw error;
+      const res = data as { ok: boolean; message?: string };
+      if (!res?.ok) throw new Error(res?.message ?? 'That code did not work.');
+      await loadProfile(session?.user.id);
+    },
+    [loadProfile, session?.user.id],
+  );
+
   const signUp = useCallback<AuthValue['signUp']>(
     async ({ email, password, fullName, phone, inviteCode }) => {
       // Note what is NOT sent here: a role. The signup trigger reads it off the
@@ -204,6 +291,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
       isStaff,
       isAdmin: profile?.role === 'admin',
       signIn,
+      signInWith,
+      claimInvite,
       signUp,
       signOut,
       refreshProfile,
@@ -218,6 +307,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
       profileMissing,
       isStaff,
       signIn,
+      signInWith,
+      claimInvite,
       signUp,
       signOut,
       refreshProfile,

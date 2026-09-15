@@ -1,4 +1,4 @@
-import { AppState } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import { createClient } from '@supabase/supabase-js';
 // Resolves to session-storage.web.ts on web and session-storage.ts on native.
 // That split is what keeps expo-sqlite out of the web bundle — see the comment
@@ -24,9 +24,18 @@ export const supabase = createClient(
       storage: sessionStorage,
       autoRefreshToken: isConfigured,
       persistSession: isConfigured,
-      // Native never carries the session in a URL fragment. On web we are not
-      // using OAuth redirects either, so this stays off in both.
-      detectSessionInUrl: false,
+      // PKCE for everybody. The implicit flow puts the token in a URL fragment,
+      // which ends up in browser history and in whatever the phone's OS logs
+      // about opened links; PKCE puts a one-time CODE there instead and the
+      // real token never travels in a URL. It is also the only flow that works
+      // across the native browser round-trip in ./auth.
+      flowType: 'pkce',
+      // On WEB the provider sends the browser back to this site with ?code=,
+      // and this is what notices it and exchanges it for a session. Native
+      // never gets the session via a URL -- ./auth captures the redirect from
+      // the in-app browser and exchanges the code by hand -- so it stays off
+      // there, where it would only ever be looking at a deep link.
+      detectSessionInUrl: Platform.OS === 'web',
     },
   },
 );
