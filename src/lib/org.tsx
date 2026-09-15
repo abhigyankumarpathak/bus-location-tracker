@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import type { PropsWithChildren } from 'react';
 import { supabase } from './supabase';
+import { useAuth } from './auth';
 import { todayIn } from './day';
 import type { Organization } from './types';
 
@@ -84,57 +85,50 @@ export function useToday() {
 }
 
 export function OrgProvider({ children }: PropsWithChildren) {
+  // Read from the auth context rather than subscribing here. OrgProvider is
+  // mounted inside AuthProvider, and a second onAuthStateChange subscription
+  // that awaited a query inside its callback would deadlock the same way the
+  // first one did — see the note on that subscription. This gets the same
+  // signal with none of the risk.
+  const { session, loading: authLoading } = useAuth();
+
   const [org, setOrg] = useState<Organization | null>(null);
   const [loading, setLoading] = useState(true);
 
-  /**
-   * Read the row, and be honest about whether the answer can be trusted.
-   *
-   * `read org` is `using (is_active())`, so this query returns NOTHING to a
-   * caller without a session. On a fresh browser the session is still being
-   * restored from storage when the provider mounts, so the first read comes
-   * back empty — and an empty org row reads as every feature switched OFF.
-   *
-   * That is what put a new browser into the full app when the operation was in
-   * attendance-only mode, and why reloading fixed it: the second mount happened
-   * with a session in hand.
-   *
-   * So `loading` stays true until the answer is worth acting on: either the row
-   * arrived, or there is definitively nobody signed in to read it. Screens that
-   * NAVIGATE on a flag wait for that — see app/index.tsx.
-   */
   const reload = useCallback(async () => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-
     const { data } = await supabase.from('organization').select('*').eq('id', 1).maybeSingle();
     setOrg((data as Organization) ?? null);
-
-    if (data || !session) setLoading(false);
   }, []);
 
+  /**
+   * Re-read whenever who is signed in changes.
+   *
+   * `read org` is `using (is_active())`, so this returns NOTHING to a caller
+   * without a session — and on a fresh browser the session is still being
+   * restored when the provider mounts. An empty org row reads as every feature
+   * switched OFF, which is what put a new browser into the full app while the
+   * operation was in attendance-only mode.
+   *
+   * `loading` settles only once auth has an answer, because screens that
+   * NAVIGATE on a flag wait for it, and a redirect fired on a default is
+   * permanent — nothing re-navigates when the real value lands.
+   */
   useEffect(() => {
+    if (authLoading) return;
+
     let alive = true;
-    const run = () => {
-      if (alive) reload();
-    };
-
-    run();
-
-    // AND AGAIN WHENEVER THE SESSION CHANGES. This is the actual fix: signing
-    // in, restoring a session from storage, and refreshing a token all fire
-    // here, so the flags are re-read the moment they become readable instead of
-    // staying wrong until somebody reloads the page.
-    const { data: sub } = supabase.auth.onAuthStateChange(run);
+    (async () => {
+      await reload();
+      if (alive) setLoading(false);
+    })();
 
     return () => {
       alive = false;
-      sub.subscription.unsubscribe();
     };
-  }, [reload]);
+  }, [authLoading, session?.user.id, reload]);
 
   return (
     <OrgContext.Provider value={{ org, loading, reload }}>{children}</OrgContext.Provider>
   );
 }
+

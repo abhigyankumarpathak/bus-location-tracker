@@ -121,6 +121,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [identities, setIdentities] = useState<UserIdentity[]>([]);
   /** Signed in, but the account behind the session no longer exists. */
   const [profileMissing, setProfileMissing] = useState(false);
+  /** The first auth event has arrived, so `session` is an answer not a default. */
+  const [authReady, setAuthReady] = useState(false);
 
   const loadProfile = useCallback(async (userId: string | undefined) => {
     if (!userId) {
@@ -144,32 +146,63 @@ export function AuthProvider({ children }: PropsWithChildren) {
     setProfileMissing(Boolean(!data || error));
   }, []);
 
+  /**
+   * THE AUTH SUBSCRIPTION, AND WHY THE CALLBACK IS SYNCHRONOUS.
+   *
+   * onAuthStateChange runs its callback while the auth client holds an internal
+   * lock. Awaiting another Supabase call inside it — which is what loading the
+   * profile is — can deadlock: the query waits for the lock, the lock waits for
+   * the callback, and the app sits on a spinner until something reloads the
+   * page. That was the "signing in with Google hangs until I refresh" bug, and
+   * it only showed on the OAuth path because that is the one where a session
+   * arrives while the app is already running.
+   *
+   * So this callback only sets state. Everything that talks to the server
+   * happens in the effect below, outside the lock.
+   *
+   * It also replaces a getSession() call that raced the URL exchange. On the
+   * way back from Google the page loads at /?code=…, and getSession() resolves
+   * BEFORE detectSessionInUrl has traded that code for a session — so the app
+   * decided there was no session, redirected to sign-in, and then the session
+   * appeared underneath a screen that was no longer meant to exist.
+   * INITIAL_SESSION fires after the client has settled that, so it is the only
+   * answer worth acting on.
+   */
   useEffect(() => {
-    let active = true;
-
-    supabase.auth.getSession().then(async ({ data }) => {
-      if (!active) return;
-      setSession(data.session);
-      await loadProfile(data.session?.user.id);
-      setIdentities(data.session?.user.identities ?? []);
-      if (active) setLoading(false);
-    });
-
-    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, next) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, next) => {
       setSession(next);
-      setStaffUnlocked(false);
-      await loadProfile(next?.user.id);
-      // Identities travel with the session, and linking one fires this — so the
-      // list stays current without anybody asking it to.
       setIdentities(next?.user.identities ?? []);
-      setLoading(false);
+
+      // Only on a real change of who is signed in. Doing it on every event
+      // would re-lock the staff portal on each hourly token refresh.
+      if (event === 'SIGNED_OUT' || event === 'SIGNED_IN') setStaffUnlocked(false);
+
+      setAuthReady(true);
     });
+
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  // The profile, once the session is settled. Keyed on the user id so it
+  // re-runs when somebody signs in or out, and not on a token refresh.
+  const userId = session?.user.id;
+
+  useEffect(() => {
+    // Before the first auth event there is no answer yet, only a default —
+    // and settling `loading` on a default is what sent people to the wrong
+    // screen. Wait.
+    if (!authReady) return;
+
+    let alive = true;
+    (async () => {
+      await loadProfile(userId);
+      if (alive) setLoading(false);
+    })();
 
     return () => {
-      active = false;
-      sub.subscription.unsubscribe();
+      alive = false;
     };
-  }, [loadProfile]);
+  }, [authReady, userId, loadProfile]);
 
   // A pending account is waiting on an admin. Poll while they wait so approval
   // moves them into the app without needing to force-quit and sign in again.
