@@ -1,8 +1,10 @@
 import { useCallback, useState } from 'react';
-import { Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { alert } from '../../src/lib/alert';
 import { useFocusEffect } from 'expo-router';
 import { useAuth } from '../../src/lib/auth';
+import { appUrl } from '../../src/lib/app-url';
+import { copyText } from '../../src/lib/clipboard';
 import { supabase } from '../../src/lib/supabase';
 import { useReference } from '../../src/lib/hooks';
 import type { Invite, Profile, Role, Student } from '../../src/lib/types';
@@ -42,19 +44,19 @@ const DEFAULT_REASON =
 const INVITE_ROLES: Role[] = ['student', 'parent', 'driver', 'coordinator'];
 
 /**
- * The message handed to the invitee. Sent through the OS share sheet, which is
- * how a coordinator actually gets a code to a parent — text, email, whatever
- * they already use. (The share sheet also offers Copy, which is why there is no
- * separate clipboard dependency: `expo-clipboard` is a native module, and adding
- * one forces a full native rebuild for something the share sheet already does.)
+ * The message handed to the invitee — copied on web, shared on native.
+ *
+ * Deliberately three short lines, because it gets pasted into a text message
+ * and read on a lock screen. The code leads, because that is the part somebody
+ * has to type; the link closes, because that is the part they tap. Anything in
+ * between is read by nobody.
+ *
+ * The URL is not hardcoded: see lib/app-url. A link that stops being right the
+ * day a real domain is bought is worse than no link at all.
  */
-function inviteMessage(role: Role, code: string) {
-  return (
-    `You have been invited to the school transport app as a ${role}.\n\n` +
-    `Your invite code is ${code}\n\n` +
-    `Open the app, tap "I have an invite code", and enter it. ` +
-    `The code works once and expires in 14 days.`
-  );
+function inviteMessage(_role: Role, code: string) {
+  const url = appUrl();
+  return [code, 'bus app sign up code', url].filter(Boolean).join('\n\n');
 }
 
 export default function StaffPeople() {
@@ -150,16 +152,23 @@ export default function StaffPeople() {
     setInviteEmail('');
     await load();
 
+    // Copied straight away, because the next thing anybody does with a code is
+    // paste it into a message. Reported honestly: "Copied" over a clipboard that
+    // refused is a small lie that costs somebody a lost invite.
+    const message = inviteMessage(invite.role, invite.code);
+    const how = await copyText(message);
+
     alert(
-      'Invite created',
-      `${invite.full_name || 'They'} can now sign up as a ${invite.role} with the code:\n\n${invite.code}\n\nIt works once and expires in 14 days.`,
-      [
-        { text: 'Done' },
-        {
-          text: 'Send it to them',
-          onPress: () => Share.share({ message: inviteMessage(invite.role, invite.code) }),
-        },
-      ],
+      how === 'copied' ? 'Invite created and copied' : 'Invite created',
+      how === 'copied'
+        ? `Paste it straight into a message to ${invite.full_name || 'them'}:\n\n${message}`
+        : `${invite.full_name || 'They'} can sign up as a ${invite.role} with this. It works once and expires in 14 days.\n\n${message}`,
+      how === 'copied'
+        ? [{ text: 'Done' }]
+        : [
+            { text: 'Done' },
+            { text: 'Try copying again', onPress: () => copyText(message) },
+          ],
     );
   }
 
@@ -351,10 +360,14 @@ export default function StaffPeople() {
               </Row>
               <Row style={styles.wrap}>
                 <Button
-                  label="Send it to them"
+                  label={Platform.OS === 'web' ? 'Copy the code' : 'Send it to them'}
                   variant="secondary"
                   style={styles.grow}
-                  onPress={() => Share.share({ message: inviteMessage(invite.role, invite.code) })}
+                  onPress={async () => {
+                    const message = inviteMessage(invite.role, invite.code);
+                    const how = await copyText(message);
+                    if (how === 'copied') alert('Copied', message);
+                  }}
                 />
                 <Button label="Revoke" variant="danger" onPress={() => revokeInvite(invite)} />
               </Row>
