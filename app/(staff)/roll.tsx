@@ -53,6 +53,8 @@ export default function StaffRoll() {
     { parent_id: string; parent_name: string; status: string }[]
   >([]);
   /** Links a parent proposed that nobody has settled. */
+  /** Students with at least one accepted guardian. */
+  const [linkedIds, setLinkedIds] = useState<string[]>([]);
   const [pending, setPending] = useState<
     { parent_id: string; parent_name: string; student_id: string; student_name: string; asked_by: string }[]
   >([]);
@@ -64,6 +66,12 @@ export default function StaffRoll() {
 
     const { data: waiting } = await supabase.rpc('pending_links');
     setPending((waiting as typeof pending) ?? []);
+
+    const { data: linked } = await supabase
+      .from('guardian_links')
+      .select('student_id')
+      .eq('status', 'accepted');
+    setLinkedIds([...new Set(((linked as { student_id: string }[]) ?? []).map((l) => l.student_id))]);
 
     setLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -96,10 +104,27 @@ export default function StaffRoll() {
     if ((data as { error?: string })?.error) return setError((data as { error: string }).error);
 
     setNewName('');
+    const created = (data as { id?: string })?.id;
     await reload();
+
+    // Open their family panel straight away rather than telling them to go and
+    // find it. A rider with nobody linked works perfectly — monitors tick them,
+    // the register counts them — while their family sees nothing and nothing
+    // says so. The only protection against that is not making it a separate
+    // step somebody has to remember.
+    if (created) {
+      await openLink({
+        student_id: created,
+        full_name: name,
+        has_phone: false,
+        is_monitor: false,
+        answers_to: null,
+      });
+    }
+
     alert(
-      'Added',
-      `${name} is on the roll and marked as having no phone. Link a parent so their family can see it — they cannot search for this rider themselves.`,
+      'Added — now link their family',
+      `${name} is on the roll and marked as having no phone. They cannot be searched for, so their parents can only be linked from here. Pick them below.`,
     );
   }
 
@@ -199,6 +224,9 @@ export default function StaffRoll() {
   const monitors = rows.filter((r) => r.is_monitor);
   const noPhone = rows.filter((r) => !r.has_phone && !r.is_monitor);
   const unassigned = noPhone.filter((r) => !r.answers_to);
+  // Riders whose family cannot see them. Only meaningful for the phone-less:
+  // anybody else can at least be found by a parent searching their email.
+  const unlinked = noPhone.filter((r) => !linkedIds.includes(r.student_id));
 
   return (
     <Screen>
@@ -210,6 +238,14 @@ export default function StaffRoll() {
           <Stat label="Without a phone" value={String(noPhone.length)} tone={theme.accent} />
           <Stat label="On roll" value={String(rows.length)} tone={theme.text} />
         </Row>
+        {unlinked.length > 0 ? (
+          <Text style={styles.warn}>
+            ⚠ {unlinked.length}{' '}
+            {unlinked.length === 1 ? 'rider has' : 'riders have'} no parent linked, so their
+            families cannot see whether they boarded. They cannot be searched for — tap Parents on
+            each and pick the family.
+          </Text>
+        ) : null}
         {monitors.length === 0 && noPhone.length > 0 ? (
           <Text style={styles.warn}>
             ⚠ {noPhone.length} {noPhone.length === 1 ? 'rider' : 'riders'} cannot scan and there
