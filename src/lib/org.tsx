@@ -90,7 +90,7 @@ export function OrgProvider({ children }: PropsWithChildren) {
   // that awaited a query inside its callback would deadlock the same way the
   // first one did — see the note on that subscription. This gets the same
   // signal with none of the risk.
-  const { session, loading: authLoading } = useAuth();
+  const { session, profile, loading: authLoading } = useAuth();
 
   const [org, setOrg] = useState<Organization | null>(null);
   const [loading, setLoading] = useState(true);
@@ -117,6 +117,12 @@ export function OrgProvider({ children }: PropsWithChildren) {
     if (authLoading) return;
 
     let alive = true;
+
+    // Back to true on every re-read, because what is in `org` right now is the
+    // PREVIOUS answer and screens navigate on these flags. Redirecting on a
+    // stale value is permanent — nothing re-navigates when the real one lands.
+    setLoading(true);
+
     (async () => {
       await reload();
       if (alive) setLoading(false);
@@ -125,7 +131,16 @@ export function OrgProvider({ children }: PropsWithChildren) {
     return () => {
       alive = false;
     };
-  }, [authLoading, session?.user.id, reload]);
+    // PROFILE, not just the session. `read org` is `using (is_active())`, which
+    // reads the profiles table — so a signed-in user with no profile yet is
+    // refused, and `org` comes back null, which reads as every feature OFF.
+    //
+    // That is exactly the state a Google signup is in at the moment it returns:
+    // session established, profile not created until the invite is claimed a
+    // second later. Keying only on the session meant the org was never re-read
+    // once the profile appeared, so the student landed on the full-platform
+    // screens and a manual refresh was the only way out.
+  }, [authLoading, session?.user.id, profile?.id, profile?.status, reload]);
 
   return (
     <OrgContext.Provider value={{ org, loading, reload }}>{children}</OrgContext.Provider>
