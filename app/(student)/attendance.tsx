@@ -4,6 +4,7 @@ import { useAuth } from '../../src/lib/auth';
 import { useFeatures } from '../../src/lib/org';
 import { useToday } from '../../src/lib/org';
 import { supabase } from '../../src/lib/supabase';
+import { useRealtime } from '../../src/lib/realtime';
 import { ABSENCE_LABEL, decodeVanQr } from '../../src/lib/types';
 import type {
   Attendance,
@@ -162,6 +163,10 @@ export default function StudentAttendance() {
   useEffect(() => {
     reload();
   }, [reload]);
+
+  // Re-read when anybody else changes something, so two people working the same
+  // list are never looking at different versions of it.
+  useRealtime(['attendance', 'attendance_absence', 'students', 'guardian_links'], reload);
 
   /**
    * The evening lock, on the client.

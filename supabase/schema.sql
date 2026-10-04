@@ -4799,3 +4799,18 @@ alter publication supabase_realtime add table daily_trips;
 alter publication supabase_realtime add table notifications;
 alter publication supabase_realtime add table change_requests;
 alter publication supabase_realtime add table vehicle_locations;
+
+-- Added with the attendance work. `organization` is in here deliberately: it
+-- carries the attendance-only toggle, and without it flipping that switch
+-- leaves everybody else on the old app until they reload -- which during a
+-- changeover is exactly when nobody reloads anything.
+--
+-- RLS still applies. Realtime evaluates the same policies, so publishing a
+-- table does not widen who can read it.
+alter publication supabase_realtime add table attendance;
+alter publication supabase_realtime add table attendance_absence;
+alter publication supabase_realtime add table profiles;
+alter publication supabase_realtime add table students;
+alter publication supabase_realtime add table guardian_links;
+alter publication supabase_realtime add table invites;
+alter publication supabase_realtime add table organization;

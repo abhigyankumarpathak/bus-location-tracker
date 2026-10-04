@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../../src/lib/auth';
 import { supabase } from '../../src/lib/supabase';
+import { useRealtime } from '../../src/lib/realtime';
 import type { RollRow } from '../../src/lib/types';
 import { alert } from '../../src/lib/alert';
 import {
@@ -80,6 +81,10 @@ export default function StaffRoll() {
   useEffect(() => {
     reload();
   }, [reload]);
+
+  // Re-read when anybody else changes something, so two people working the same
+  // list are never looking at different versions of it.
+  useRealtime(['students', 'profiles', 'guardian_links', 'attendance_absence'], reload);
 
   /**
    * Create a roster record for a rider with no phone.

@@ -5,6 +5,7 @@ import { useAuth } from '../../src/lib/auth';
 import { SignInMethods } from '../../src/components/SignInMethods';
 import { useToday } from '../../src/lib/org';
 import { supabase } from '../../src/lib/supabase';
+import { useRealtime } from '../../src/lib/realtime';
 import { ABSENCE_LABEL, registerCounts } from '../../src/lib/types';
 import type { RegisterRow } from '../../src/lib/types';
 import {
@@ -52,6 +53,10 @@ export default function StaffAttendance() {
   useEffect(() => {
     reload();
   }, [reload]);
+
+  // Re-read when anybody else changes something, so two people working the same
+  // list are never looking at different versions of it.
+  useRealtime(['attendance', 'attendance_absence', 'profiles', 'students'], reload);
 
   async function setPresent(row: RegisterRow, present: boolean) {
     setError('');

@@ -3,6 +3,7 @@ import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-n
 import { alert } from '../../src/lib/alert';
 import { useFocusEffect } from 'expo-router';
 import { useAuth } from '../../src/lib/auth';
+import { useRealtime } from '../../src/lib/realtime';
 import { appUrl } from '../../src/lib/app-url';
 import { copyText } from '../../src/lib/clipboard';
 import { supabase } from '../../src/lib/supabase';
@@ -131,20 +132,16 @@ export default function StaffPeople() {
     }, [load]),
   );
 
-  // ...and keep refetching while the invite list is actually on screen.
+  // ...and follow the tables, so a change made elsewhere lands here at once.
   //
   // A code stops being unused at a moment that happens on someone ELSE's phone.
   // The focus refetch above misses that entirely for the admin who hands out a
   // code and then sits here waiting for the person to appear: the redeemed code
   // stayed listed under "Unused codes", still shareable, until they navigated
-  // away and back. Poll instead, so a code moves to "Recently used" on its own.
-  useFocusEffect(
-    useCallback(() => {
-      if (filter !== 'invites') return;
-      const timer = setInterval(load, 15_000);
-      return () => clearInterval(timer);
-    }, [filter, load]),
-  );
+  // away and came back. This replaces a fifteen-second poll that solved the same
+  // problem by asking the server a hundred times an hour whether anything had
+  // happened — almost always to be told no.
+  useRealtime(['invites', 'profiles'], load);
 
   async function createInvite() {
     setError('');

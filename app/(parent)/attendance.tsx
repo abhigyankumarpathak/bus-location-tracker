@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../../src/lib/auth';
 import { useFeatures, useToday } from '../../src/lib/org';
 import { supabase } from '../../src/lib/supabase';
+import { useRealtime } from '../../src/lib/realtime';
 import { useMyChildren } from '../../src/lib/hooks';
 import { ABSENCE_LABEL, formatDateSpan } from '../../src/lib/types';
 import type { Attendance, AttendanceAbsence, AbsenceKind } from '../../src/lib/types';
@@ -124,6 +125,10 @@ export default function ParentAttendance() {
   useEffect(() => {
     reload();
   }, [reload]);
+
+  // Re-read when anybody else changes something, so two people working the same
+  // list are never looking at different versions of it.
+  useRealtime(['attendance', 'attendance_absence', 'guardian_links'], reload);
 
   if (childrenLoading || loading) return <Loading />;
 

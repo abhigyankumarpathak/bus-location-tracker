@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import type { PropsWithChildren } from 'react';
 import { supabase } from './supabase';
+import { useRealtime } from './realtime';
 import { useAuth } from './auth';
 import { todayIn } from './day';
 import type { Organization } from './types';
@@ -141,6 +142,11 @@ export function OrgProvider({ children }: PropsWithChildren) {
     // once the profile appeared, so the student landed on the full-platform
     // screens and a manual refresh was the only way out.
   }, [authLoading, session?.user.id, profile?.id, profile?.status, reload]);
+
+  // Flipping attendance-only mode reaches everybody immediately. Without this
+  // the switch leaves every other signed-in person on the old app until they
+  // reload — and during a changeover is exactly when nobody reloads anything.
+  useRealtime(['organization'], reload);
 
   return (
     <OrgContext.Provider value={{ org, loading, reload }}>{children}</OrgContext.Provider>
