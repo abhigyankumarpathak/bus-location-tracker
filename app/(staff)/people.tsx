@@ -46,17 +46,41 @@ const INVITE_ROLES: Role[] = ['student', 'parent', 'driver', 'coordinator'];
 /**
  * The message handed to the invitee — copied on web, shared on native.
  *
- * Deliberately three short lines, because it gets pasted into a text message
- * and read on a lock screen. The code leads, because that is the part somebody
- * has to type; the link closes, because that is the part they tap. Anything in
- * between is read by nobody.
+ * WORDED PER ROLE, because the two audiences are not the same person. A parent
+ * is being told about a service they have never heard of and needs a sentence
+ * saying what it is before a code means anything; a student has been told about
+ * it at school all week and needs the code at the top where they can read it off
+ * a lock screen.
  *
- * The URL is not hardcoded: see lib/app-url. A link that stops being right the
- * day a real domain is bought is worse than no link at all.
+ * Both get pasted into a text message, so neither runs long. The URL is not
+ * hardcoded — see lib/app-url. A link that stops being right the day a real
+ * domain is bought is worse than no link: the person taps it, lands nowhere,
+ * and concludes the code is bad.
  */
-function inviteMessage(_role: Role, code: string) {
+function inviteMessage(role: Role, code: string) {
   const url = appUrl();
-  return [code, 'bus app sign up code', url].filter(Boolean).join('\n\n');
+
+  if (role === 'parent') {
+    return [
+      "Hi, you've been added to student absence tracking website.",
+      'Please create your account using below link and invite code',
+      url,
+      `Invite code : ${code}`,
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  // Everyone else: the code leads, because that is the part they have to type.
+  // The two description lines sit together as one block — split by a blank line
+  // they read as two unrelated remarks rather than one explanation.
+  return [
+    code,
+    'bus app sign up code\nThis is for the student absence tracker website',
+    url,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 export default function StaffPeople() {
