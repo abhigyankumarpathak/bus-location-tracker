@@ -6,6 +6,16 @@
 --
 -- Paste the whole file into the Supabase SQL editor. Every row should be OK;
 -- anything MISSING sorts to the top.
+--
+-- WHAT THIS FILE CANNOT TELL YOU. It checks that objects exist. It says nothing
+-- about whether any of them is switched on, because the things that switch them
+-- on are not objects: the realtime publication is a list of tables, pg_cron is
+-- an extension and a set of jobs, attendance-only is a boolean in a row, and
+-- monitors are rows of data. retention.sql is not covered here at all. So a run
+-- where all of these say OK is still consistent with a register that never gets
+-- purged, a schedule that never fires, and phone-less riders nobody can confirm.
+--
+-- Run `state.sql` after this one. That is the file that answers "is it working".
 -- ===========================================================================
 
 -- Did the two patches actually land? Paste this whole thing into the

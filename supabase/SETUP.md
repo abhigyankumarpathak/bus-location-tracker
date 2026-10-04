@@ -408,6 +408,36 @@ live data and idempotent. Run them in filename order:
    *time*; this fixes every *date*. Without it `current_date` is the database's
    date, so a New York operation rolls over to tomorrow at 8pm and every trip
    vanishes from every screen until local midnight.
+10. `2026-08-27d-checkin-grace.sql` — the check-in window.
+11. `2026-08-28-attendance-only.sql` — the register, the printed card, and the
+    toggle that hides routes, buses and the driver. Everything the school is
+    actually using day to day starts here.
+12. `2026-08-28b-attendance-absence.sql` — declared absences, and the
+    denominator that goes with them. It `drop function if exists
+    attendance_register(date)` first on purpose: the function widens from 6 OUT
+    columns to 10, and Postgres refuses to change a return type in place.
+13. `2026-09-03-bus-monitors.sql` — `has_phone`, `is_monitor`, and the
+    round-robin that splits the phone-less riders between monitors.
+14. `2026-09-03b-roll-leftjoin.sql` — the staff roll left-joins `students`.
+    Inner-joined, a student with no `students` row simply was not on the list,
+    and the screen gave no reason for it.
+15. `2026-09-03c-roster-riders.sql` — students who will never sign in, and the
+    office-side linking that is the only way their families get attached.
+16. `2026-09-03d-pending-links.sql`
+17. `2026-09-03e-auto-link.sql` — links accept themselves on insert. This is the
+    weakest point in the access model by design; `docs/SECURITY.md` says why, and
+    the one-line revert is in there too.
+18. `2026-09-14-social-login.sql` — Google sign-in, without loosening the invite
+    gate: the invite is still the only source of a role.
+19. `2026-09-14b-claim-details.sql` — the typed name survives the round trip to
+    Google and back.
+20. `2026-10-04-realtime.sql` — adds the seven newer tables to the realtime
+    publication, so the register, absences, roll and family links stop needing a
+    manual refresh. **verify.sql cannot check this one** — a publication is a
+    list of tables, not a schema object. `state.sql` checks it.
+21. `2026-10-04b-drop-boarding-events.sql` — removes a table that was never in
+    `schema.sql`. Drift, not a feature; the file explains why dropping beat
+    keeping it.
 
 Then paste **`supabase/patches/drift.sql`** into the SQL editor. It compares
 every table and column in `schema.sql` against the live database and is the check
@@ -421,6 +451,23 @@ table, column, function and trigger the patches create — plus that the C4 guar
 is the *fixed* version, which no existence check would catch — and sorts anything
 missing to the top. "Success. No rows returned" is what the editor prints for any
 DDL, so it is not evidence of anything on its own.
+
+Finally paste **`supabase/patches/state.sql`**, which answers the different
+question: not "did the DDL land" but "is any of it switched on". Every row of
+verify.sql can say OK while the system does nothing useful, because the things
+that make it useful are not schema objects and so cannot be checked by one —
+
+- the **realtime publication** is a list of tables
+- **`retention.sql`** is not referenced by verify.sql at all, so a database that
+  never ran it passes every check while the register grows without limit and no
+  family is ever sent a weekly report
+- **pg_cron** is an extension and a set of jobs: with it off, the weekly purge,
+  trip generation and the watchdog are all manual clicks that somebody has to
+  remember
+- **monitors, phone-less riders and family links** are rows of data
+
+Run it after any patch session, and read the `action` column on anything that is
+not a tick.
 
 ---
 
