@@ -82,7 +82,7 @@ function inviteMessage(role: Role, code: string) {
       '',
       "You should see your child's name in Attendance tab. Click and add any absence day. If you click \"One day\" it toggles to \"Several days\" for ability to mark multiple days' absence.",
       '',
-      'here is a full explanation of the web for both parents and students',
+      'Here is a full explanation of the website for both parents and students',
       GUIDE_URL,
       '',
       'Regards,',
