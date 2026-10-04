@@ -152,7 +152,9 @@ export function FamilyLinks({ perspective }: { perspective: 'student' | 'parent'
           of you can remove it.
         </Text>
         <ErrorText>{error}</ErrorText>
-        <Button label="Send request" onPress={onAdd} loading={busy} disabled={!contact.trim()} />
+        {/* Not "Send request" any more: links accept themselves, so promising a
+            wait invites somebody to go and chase a person for nothing. */}
+        <Button label={`Link this ${noun}`} onPress={onAdd} loading={busy} disabled={!contact.trim()} />
       </Card>
 
       {incoming.length > 0 && (
