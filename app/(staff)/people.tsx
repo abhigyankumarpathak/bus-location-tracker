@@ -62,12 +62,15 @@ function inviteMessage(role: Role, code: string) {
 
   if (role === 'parent') {
     return [
-      "Hi, you've been added to student absence tracking website.",
+      "Hi, You've been added to student absence tracking website.",
       'Please create your account using below link and invite code',
       url,
       `Invite code : ${code}`,
+      '',
+      'Regards,',
+      'MPTA Bus Coordination team',
     ]
-      .filter(Boolean)
+      .filter((line) => line !== null)
       .join('\n');
   }
 
