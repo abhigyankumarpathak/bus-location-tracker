@@ -69,7 +69,7 @@ function inviteMessage(role: Role, code: string) {
       `Invite code : ${code}`,
       '',
       'Regards,',
-      'MPTA Bus Coordination team',
+      'MPTA Bus Coordination Team',
     ]
       .filter((line) => line !== null)
       .join('\n');
