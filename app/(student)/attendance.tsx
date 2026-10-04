@@ -61,12 +61,18 @@ export default function StudentAttendance() {
   const [kind, setKind] = useState<AbsenceKind>('club');
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
+  /** Defaults to today, so the common case is still one tap and no typing. */
+  const [from, setFrom] = useState(today);
+  const [to, setTo] = useState('');
+  const [multiDay, setMultiDay] = useState(false);
 
   /**
    * The riders this student has to account for, if they are a bus monitor.
    * Empty for everybody else, so the section simply does not render.
    */
   const [roster, setRoster] = useState<MonitorRosterRow[]>([]);
+  /** Whether this student holds the monitor job at all, away or not. */
+  const [isMonitor, setIsMonitor] = useState(false);
   /** Who the monitor is about to confirm. Everyone, until they say otherwise. */
   const [absentees, setAbsentees] = useState<string[]>([]);
 
@@ -99,6 +105,17 @@ export default function StudentAttendance() {
     const { data: mine } = await supabase.rpc('my_monitor_roster');
     setRoster((mine as MonitorRosterRow[]) ?? []);
 
+    // The FLAG, not the roster length. Once a monitor declares themselves away
+    // they are dealt nobody, so the roster empties — and inferring the job from
+    // the roster would silently stop telling them their riders are covered at
+    // exactly the moment that is what they want to know.
+    const { data: flags } = await supabase
+      .from('students')
+      .select('is_monitor')
+      .eq('student_id', me)
+      .maybeSingle();
+    setIsMonitor(Boolean((flags as { is_monitor?: boolean } | null)?.is_monitor));
+
     setLoading(false);
   }, [me, today]);
 
@@ -127,12 +144,17 @@ export default function StudentAttendance() {
 
   async function declare() {
     if (!me) return;
+    const iso = /^\d{4}-\d{2}-\d{2}$/;
+    if (!iso.test(from)) return setError('Enter the date as YYYY-MM-DD.');
+    if (multiDay && !iso.test(to)) return setError('Enter the last date as YYYY-MM-DD.');
+    if (multiDay && to < from) return setError('The last day cannot be before the first.');
+
     setError('');
     setBusy(true);
     const { data, error: e } = await supabase.rpc('declare_absence', {
       target: me,
-      from_date: today,
-      to_date: null,
+      from_date: from,
+      to_date: multiDay ? to : null,
       kind,
       reason: reason.trim() || null,
     });
@@ -144,10 +166,19 @@ export default function StudentAttendance() {
 
     setDeclaring(false);
     setReason('');
+    setMultiDay(false);
+    setFrom(today);
+    setTo('');
     await reload();
     alert(
       'Told the school',
-      'Your family has been told too. If it turns out you are riding after all, just scan the code — that works and they will be told again.',
+      'Your family has been told too. If it turns out you are riding after all, just scan the code — that works and they will be told again.' +
+        // A monitor's worry is the people depending on them, not themselves.
+        // Saying this at the moment they declare is what stops somebody coming
+        // in anyway because they thought they had to.
+        (isMonitor
+          ? '\n\nThe riders you account for have been shared out between the other monitors automatically, and the office has been told. You do not need to arrange anything.'
+          : ''),
     );
   }
 
@@ -291,6 +322,41 @@ export default function StudentAttendance() {
                   onPress={() => setKind('absent')}
                 />
               </Row>
+              {/*
+                Dates, matching the control parents already have. This screen
+                used to post `today` and nothing else, so "I am away next
+                Tuesday" could only be said on the Tuesday — by which point a
+                monitor's riders have already gone unconfirmed for an evening.
+                The server has always accepted a span and still refuses a past
+                date, so nothing new is permitted here; it was only unreachable.
+              */}
+              <Row style={styles.wrap}>
+                <Button
+                  label={multiDay ? 'Several days' : 'One day'}
+                  variant="secondary"
+                  onPress={() => {
+                    const next = !multiDay;
+                    setMultiDay(next);
+                    if (next && !to) setTo(from);
+                  }}
+                />
+              </Row>
+              <Field
+                label={multiDay ? 'First day away' : 'Date'}
+                value={from}
+                onChangeText={setFrom}
+                placeholder="YYYY-MM-DD"
+                autoCapitalize="none"
+              />
+              {multiDay ? (
+                <Field
+                  label="Last day away"
+                  value={to}
+                  onChangeText={setTo}
+                  placeholder="YYYY-MM-DD"
+                  autoCapitalize="none"
+                />
+              ) : null}
               <Field
                 label="Anything to add? (optional)"
                 value={reason}
@@ -303,6 +369,9 @@ export default function StudentAttendance() {
               </Row>
               <Text style={styles.fine}>
                 Your parents are told as well — they should not find out from an empty seat.
+                {isMonitor
+                  ? ' The office is told too, so somebody can cover the riders you account for.'
+                  : ''}
               </Text>
             </Card>
           ) : (
@@ -337,6 +406,28 @@ export default function StudentAttendance() {
         a monitor is never asked about a child whose parents already said they
         were not coming.
       */}
+      {/*
+        A monitor who is away gets an empty roster, which on its own is
+        indistinguishable from "nobody needs confirming tonight". Saying which
+        one it is matters: a monitor who thinks their riders are unaccounted for
+        will come in anyway, and one who assumes somebody else has it when the
+        pool is empty is the reason this screen exists.
+      */}
+      {isMonitor && roster.length === 0 && away ? (
+        <>
+          <SectionLabel>Your riders</SectionLabel>
+          <Card style={styles.monitor}>
+            <Text style={styles.prompt}>Covered while you are away</Text>
+            <Text style={styles.fine}>
+              You are marked as not riding, so the riders you normally account for have been shared
+              out between the other monitors. The office has been told as well. There is nothing
+              for you to arrange — and if you end up riding after all, cancel the absence above and
+              they come back to you.
+            </Text>
+          </Card>
+        </>
+      ) : null}
+
       {roster.length > 0 ? (
         <>
           <SectionLabel>Riders without a phone ({roster.length})</SectionLabel>

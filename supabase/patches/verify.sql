@@ -152,7 +152,20 @@ with expected(kind, name, label) as (values
   -- (patch 11b). boarding_events was never in schema.sql, so no existence
   -- check could ever have caught it -- drift is invisible to a list of things
   -- you expect. OK here means it is gone.
-  ('gone',   'boarding_events',                      'DRIFT · superseded table removed')
+  ('gone',   'boarding_events',                      'DRIFT · superseded table removed'),
+  -- Monitor cover (patch 12). An away monitor used to keep their riders.
+  ('func',   'monitor_cover',                        'COVER · who is actually covering today'),
+  ('trigger','on_monitor_absence',                   'COVER · the office is told'),
+  -- THE check that matters. monitor_assignments() existed before this patch and
+  -- will exist after it; what changed is one line in the monitors pool. Without
+  -- it an absent monitor is still dealt their usual share, nobody covers those
+  -- riders, and they read as "Not marked" -- indistinguishable from a child who
+  -- should be on the bus and is not. No existence check can see that.
+  ('body',   'monitor_assignments|absent_on',        'COVER · away monitors dealt nobody'),
+  -- An empty monitor pool makes monitor_assignments() return nothing, which on
+  -- screen looks like a quiet evening. This is the row that is allowed to shout.
+  ('body',   'notify_on_monitor_absence|NO MONITOR IS LEFT',
+                                                     'COVER · empty pool is escalated')
 )
 select
   case when found then '✅ OK  ' else '❌ MISSING' end as status,

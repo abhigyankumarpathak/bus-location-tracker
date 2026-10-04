@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../../src/lib/auth';
 import { supabase } from '../../src/lib/supabase';
 import { useRealtime } from '../../src/lib/realtime';
-import type { RollRow } from '../../src/lib/types';
+import type { MonitorCover, RollRow } from '../../src/lib/types';
 import { alert } from '../../src/lib/alert';
 import {
   Badge,
@@ -60,10 +60,24 @@ export default function StaffRoll() {
     { parent_id: string; parent_name: string; student_id: string; student_name: string; asked_by: string }[]
   >([]);
 
+  /**
+   * Today's cover, from the server.
+   *
+   * `rows` carries the is_monitor FLAG, which is not the same question as "is
+   * that monitor here today". A monitor who has declared themselves away keeps
+   * the flag and is dealt nobody, so counting flags would promise a split that
+   * is not happening. These numbers come from the same function the office
+   * notification reads, so the screen and the alert can never disagree.
+   */
+  const [cover, setCover] = useState<MonitorCover | null>(null);
+
   const reload = useCallback(async () => {
     const { data, error: e } = await supabase.rpc('attendance_roll');
     if (e) setError(e.message);
     setRows((data as RollRow[]) ?? []);
+
+    const { data: c } = await supabase.rpc('monitor_cover');
+    setCover((c as MonitorCover) ?? null);
 
     const { data: waiting } = await supabase.rpc('pending_links');
     setPending((waiting as typeof pending) ?? []);
@@ -233,6 +247,10 @@ export default function StaffRoll() {
   // anybody else can at least be found by a parent searching their email.
   const unlinked = noPhone.filter((r) => !linkedIds.includes(r.student_id));
 
+  // Named, not counted. "One monitor is away" sends somebody to find out which;
+  // the name is the thing that lets them decide whether it matters.
+  const awayNames = cover?.monitors_away ?? [];
+
   return (
     <Screen>
       <Title sub="Who can scan, and who answers for whoever cannot.">Riders</Title>
@@ -251,16 +269,34 @@ export default function StaffRoll() {
             each and pick the family.
           </Text>
         ) : null}
+        {/*
+          Three different situations, and the difference between them matters
+          more than the numbers do:
+
+            no monitors at all      — nobody has been appointed yet
+            all monitors away today — appointed, but none of them is here, which
+                                      looks identical on the register and is the
+                                      one case that reads as a quiet evening
+            some away               — automatically absorbed, nothing to do
+        */}
         {monitors.length === 0 && noPhone.length > 0 ? (
           <Text style={styles.warn}>
             ⚠ {noPhone.length} {noPhone.length === 1 ? 'rider' : 'riders'} cannot scan and there
             are no monitors. They will show as missing in the register every evening. Make at
             least one student a monitor.
           </Text>
+        ) : (cover?.unassigned ?? 0) > 0 ? (
+          <Text style={styles.warn}>
+            ⚠ Every monitor is away today, so nobody can confirm the {cover?.unassigned}{' '}
+            {cover?.unassigned === 1 ? 'rider' : 'riders'} without a phone. They will all show as
+            not marked and no family will be told. Make another student a monitor for today.
+          </Text>
         ) : monitors.length > 0 ? (
           <Text style={styles.fine}>
-            Divided evenly — about {Math.ceil(noPhone.length / monitors.length)} each. The split
-            re-balances on its own when either list changes.
+            {awayNames.length > 0
+              ? `${awayNames.join(', ')} ${awayNames.length === 1 ? 'is' : 'are'} away today, so the remaining ${cover?.monitors_available} cover about ${cover?.each_monitor_covers} each.`
+              : `Divided evenly — about ${cover?.each_monitor_covers ?? Math.ceil(noPhone.length / monitors.length)} each.`}{' '}
+            The split re-balances on its own when either list changes.
           </Text>
         ) : null}
       </Card>

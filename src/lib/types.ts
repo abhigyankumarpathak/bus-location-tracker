@@ -212,6 +212,27 @@ export interface MonitorRosterRow {
   source: AttendanceSource | null;
 }
 
+/**
+ * Who is actually covering the phone-less riders today.
+ *
+ * Separate from counting `is_monitor` on the roll, because the flag says a
+ * student has the job and not that they are here to do it. A monitor who has
+ * declared themselves away keeps the flag and is dealt nobody.
+ */
+export interface MonitorCover {
+  day: string;
+  monitors_total: number;
+  /** Monitors not away today. The divisor the round-robin actually uses. */
+  monitors_available: number;
+  /** Names, so the office can judge whether the gap matters. */
+  monitors_away: string[];
+  riders_to_cover: number;
+  /** Null when nobody is available — zero would read as "no work to do". */
+  each_monitor_covers: number | null;
+  /** Non-zero only when the monitor pool has emptied. The dangerous case. */
+  unassigned: number;
+}
+
 /** Staff view of who can scan and who answers for whom. */
 export interface RollRow {
   student_id: string;
