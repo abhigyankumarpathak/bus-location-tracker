@@ -45,6 +45,16 @@ const DEFAULT_REASON =
 const INVITE_ROLES: Role[] = ['student', 'parent', 'driver', 'coordinator'];
 
 /**
+ * The written guide — two tabs, one for parents and one for students, covering
+ * signing up and every feature either of them can reach.
+ *
+ * Hardcoded on purpose, unlike the app's own URL: this is a document that lives
+ * somewhere else entirely, so there is nothing to derive it from. If it ever
+ * moves, change it here.
+ */
+const GUIDE_URL = 'https://claude.ai/code/artifact/990bda97-9984-4112-b425-555335d53607';
+
+/**
  * The message handed to the invitee — copied on web, shared on native.
  *
  * WORDED PER ROLE, because the two audiences are not the same person. A parent
@@ -67,6 +77,13 @@ function inviteMessage(role: Role, code: string) {
       'Please create your account using below link and invite code',
       url,
       `Invite code : ${code}`,
+      '',
+      "After logging in, click on More -> Link Child-> Enter child's email address or phone and click link.",
+      '',
+      "You should see your child's name in Attendance tab. Click and add any absence day. If you click \"One day\" it toggles to \"Several days\" for ability to mark multiple days' absence.",
+      '',
+      'here is a full explanatino of the web for both parents and students',
+      GUIDE_URL,
       '',
       'Regards,',
       'MPTA Bus Coordination Team',

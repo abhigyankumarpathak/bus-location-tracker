@@ -1,0 +1,55 @@
+-- ===========================================================================
+-- Drop boarding_events, and the two enums only it used.
+--
+-- This table exists in the live database and in NO version of schema.sql. It
+-- is drift: created by hand during an early draft of the boarding model, before
+-- the self-scan flip replaced it with student_trip_status (operations) and
+-- attendance (the register). Nothing in the repository references it —
+-- `boarding_events`, `boarding_kind` and `boarding_method` appear in no
+-- migration, no function body, and no line of app code.
+--
+-- Why remove it rather than fold it into schema.sql:
+--
+--   * It holds 0 rows, so there is nothing to preserve. The usual reason to
+--     keep a superseded table (student_trip_status.boarding_code, kept until
+--     the new model has survived a term) is that it still has data or a reader.
+--     This has neither.
+--
+--   * It has RLS enabled and four policies. A policy on a table nobody reads
+--     is a thing that must be reviewed every time the access model changes,
+--     and reviewed with no way to test it. That is cost with no return.
+--
+--   * Left as drift it breaks the re-run promise at the top of schema.sql. The
+--     drop list there has to name every table the file creates; a table NOT in
+--     the list survives a re-run with its old columns and policies intact.
+--     boarding_events is the inverse case — not created by the file, so never
+--     dropped by it — which means a "clean" re-run silently leaves it standing.
+--     Either way the fix is for the live database and schema.sql to agree, and
+--     agreeing on "it does not exist" is cheaper than agreeing on a definition
+--     for something with no purpose.
+--
+-- Safe to run twice. If it was already dropped, every statement is a no-op.
+-- ===========================================================================
+
+-- cascade, not restrict: the four policies and any indexes go with it. There
+-- are no foreign keys INTO this table (nothing references it), so the cascade
+-- cannot reach further than the table's own dependents.
+drop table if exists boarding_events cascade;
+
+-- These two enums exist only to type that table's `kind` and `method` columns:
+--
+--   boarding_kind   = board, exit
+--   boarding_method = qr, manual, driver
+--
+-- Both are superseded. `kind` became the rider_status transition table (patch
+-- C8), which distinguishes far more than board/exit. `method` became the
+-- `self_scanned` flag read by notify_on_rider_status, which answers the
+-- question that actually mattered — who confirmed this, the child or an
+-- adult — rather than which input device was used.
+--
+-- Dropped after the table, because a type in use cannot be dropped and this
+-- deliberately does NOT cascade: if some object outside this file turns out to
+-- reference one of them, the right outcome is an error here, not a silent
+-- deletion of whatever that object was.
+drop type if exists boarding_kind;
+drop type if exists boarding_method;

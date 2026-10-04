@@ -137,7 +137,12 @@ with expected(kind, name, label) as (values
   ('body',   'handle_new_user|raw_app_meta_data',   'SOCIAL · trigger tolerates OAuth'),
   -- The typed name has to survive the trip to Google and back (patch 10b).
   ('body',   'claim_invite|given_name',              'SOCIAL · claim carries the details'),
-  ('body',   'apply_invite|given_name',              'SOCIAL · and applies them')
+  ('body',   'apply_invite|given_name',              'SOCIAL · and applies them'),
+  -- The only inverted check in the file: a table that must NOT be there
+  -- (patch 11b). boarding_events was never in schema.sql, so no existence
+  -- check could ever have caught it -- drift is invisible to a list of things
+  -- you expect. OK here means it is gone.
+  ('gone',   'boarding_events',                      'DRIFT · superseded table removed')
 )
 select
   case when found then '✅ OK  ' else '❌ MISSING' end as status,
@@ -167,6 +172,12 @@ from (
           and tablename  = split_part(e.name, '|', 1)
           and policyname = split_part(e.name, '|', 2)
           and coalesce(qual, '') like '%' || split_part(e.name, '|', 3) || '%')
+      -- Inverted: found = "the table is absent", so it sorts and labels like
+      -- every other row without the reader having to remember which way round
+      -- this one reads.
+      when 'gone' then not exists (
+        select 1 from information_schema.tables
+        where table_schema = 'public' and table_name = e.name)
       when 'body' then exists (
         select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
         where n.nspname = 'public'

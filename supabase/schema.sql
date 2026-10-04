@@ -15,7 +15,14 @@
 -- here survives the drop with its OLD columns (the cascade only removes its
 -- foreign keys, not the table), and the create below then fails with "relation
 -- already exists" — halfway through, leaving a half-built schema.
+-- boarding_events is the one name here the file does NOT create. It was made by
+-- hand in an early draft and superseded by student_trip_status and attendance;
+-- see patches/2026-10-04b. It is listed because the drop list's real job is to
+-- make the database match this file, and that includes removing what the file
+-- has no definition for. A table nobody creates is also a table nobody drops,
+-- which is how it survived every "clean" re-run until now.
 drop table if exists
+  boarding_events,
   attendance, attendance_absence, attendance_code,
   audit_logs, notifications, announcements, incidents, assignment_requests,
   change_requests, watchdog_alerts, arrival_alerts, trip_stop_progress, student_trip_status,
@@ -23,7 +30,10 @@ drop table if exists
   vehicle_locations, vehicle_devices, vehicles, guardian_links, students, hubs,
   schools, account_removals, invites, profiles, organization cascade;
 
+-- boarding_kind and boarding_method typed boarding_events' columns and nothing
+-- else, so they go the same way and for the same reason.
 drop type if exists
+  boarding_kind, boarding_method,
   user_role, account_status, route_type, trip_status, rider_status,
   change_kind, approval_status, incident_kind, incident_severity,
   invoice_status, location_source, watchdog_kind cascade;
